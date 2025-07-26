@@ -8,6 +8,10 @@ import (
 	"github.com/mickaelyoshua/finances/models"
 )
 
+func Test() {
+
+}
+
 func main() {
 	router := gin.Default()
 

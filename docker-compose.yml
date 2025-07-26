@@ -1,0 +1,21 @@
+services:
+  
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: mickaelyoshua@gmail.com
+      PGADMIN_DEFAULT_PASSWORD: 1234
+      PGADMIN_DEFAULT_LISTEN_PORT: 80
+    ports:
+      - 15432:80
+    volumes:
+      - ./pgadmin_data:/var/lib/pgadmin
+    networks:
+      - pgadmin_network
+    user: "$UID:$GID"
+
+networks:
+  pgadmin_network:
+    name: pgadmin_network
+    driver: bridge
