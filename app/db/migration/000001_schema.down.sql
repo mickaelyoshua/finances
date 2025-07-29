@@ -1,0 +1,11 @@
+BEGIN;
+
+DROP TABLE IF EXISTS incomes;
+DROP TABLE IF EXISTS expenses;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS subcategory_expenses;
+DROP TABLE IF EXISTS category_expenses;
+DROP TABLE IF EXISTS category_incomes;
+DROP EXTENSION IF EXISTS "uuid-ossp";
+
+COMMIT;
