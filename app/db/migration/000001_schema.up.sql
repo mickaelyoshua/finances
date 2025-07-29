@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS category_expenses(
 CREATE TABLE IF NOT EXISTS subcategory_expenses(
 	id INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
 	category_id INT NOT NULL UNIQUE REFERENCES category_expenses(id) ON DELETE CASCADE,
-	description TEXT NOT NULL UNIQUE,
+	description TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS category_incomes(
