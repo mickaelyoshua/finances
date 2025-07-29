@@ -4,14 +4,8 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/mickaelyoshua/finances/util"
 )
 
-func NewConn()(*pgx.Conn, error) {
-	config, err := util.LoadConfig(".")
-	if err != nil {
-		return nil, err
-	}
-	connString := config.GetConnString()
+func NewConn(connString string)(*pgx.Conn, error) {
 	return pgx.Connect(context.Background(), connString)
 }
