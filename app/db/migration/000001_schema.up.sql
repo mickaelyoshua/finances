@@ -20,8 +20,8 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE IF NOT EXISTS users(
 	id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-	username TEXT NOT NULL UNIQUE,
-	email TEXT NOT NULL UNIQUE,
+	username TEXT NOT NULL UNIQUE CHECK (length(username) >= 3 AND length(username) <= 50),
+	email TEXT NOT NULL UNIQUE CHECK (email ~* '^[A-Za-z0-9._+%-]+@[A-Za-z0-9.-]+[.][A-Za-z]+$'),
 	password_hash TEXT NOT NULL,
 	created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS expenses(
 	id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 	user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	subcategory_id INT NOT NULL REFERENCES subcategory_expenses(id),
-	value NUMERIC(10, 2) NOT NULL,
+	value NUMERIC(10, 2) NOT NULL CHECK (value > 0),
 	transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
 	description TEXT,
 	created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS incomes(
 	id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 	user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	category_id INT NOT NULL REFERENCES category_incomes(id),
-	value NUMERIC(10, 2) NOT NULL,
+	value NUMERIC(10, 2) NOT NULL CHECK (value > 0),
 	transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
 	description TEXT,
 	created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
