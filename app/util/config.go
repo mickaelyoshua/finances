@@ -34,5 +34,6 @@ func (config Config) GetConnString() string {
 			config.DB_Username + ":" +
 			config.DB_Password + "@" +
 			config.DB_Host + ":" +
-			config.DB_Port
+			config.DB_Port + "/" +
+			config.DB_Name
 }
