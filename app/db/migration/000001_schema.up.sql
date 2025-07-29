@@ -1,19 +1,19 @@
-BEGIN
+BEGIN;
 
 CREATE TABLE IF NOT EXISTS category_expenses(
 	id INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-	description TEXT NOT NULL
+	description TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS subcategory_expenses(
 	id INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-	category_id INT REFERENCES category_expenses(id),
-	description TEXT NOT NULL
+	category_id INT NOT NULL UNIQUE REFERENCES category_expenses(id) ON DELETE CASCADE,
+	description TEXT NOT NULL UNIQUE,
 );
 
 CREATE TABLE IF NOT EXISTS category_incomes(
 	id INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-	description TEXT NOT NULL
+	description TEXT NOT NULL UNIQUE
 );
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -30,18 +30,29 @@ CREATE TABLE IF NOT EXISTS users(
 
 CREATE TABLE IF NOT EXISTS expenses(
 	id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-	user_id UUID REFERENCES users(id),
-	subcategory_id REFERENCES subcategory_expenses(id),
-	value FLOAT NOT NULL,
-	description TEXT
+	user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	subcategory_id INT NOT NULL REFERENCES subcategory_expenses(id),
+	value NUMERIC(10, 2) NOT NULL,
+	transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
+	description TEXT,
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS incomes(
 	id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-	user_id UUID REFERENCES users(id),
-	category_id REFERENCES category_incomes(id),
-	value FLOAT NOT NULL,
-	description TEXT
+	user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	category_id INT NOT NULL REFERENCES category_incomes(id),
+	value NUMERIC(10, 2) NOT NULL,
+	transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
+	description TEXT,
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Add indexes for foreign keys to improve query performance
+CREATE INDEX ON expenses (user_id);
+CREATE INDEX ON expenses (subcategory_id);
+CREATE INDEX ON incomes (user_id);
+CREATE INDEX ON incomes (category_id);
+CREATE INDEX ON subcategory_expenses (category_id);
 
 COMMIT;
