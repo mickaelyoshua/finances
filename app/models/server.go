@@ -3,6 +3,7 @@ package models
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+	"github.com/mickaelyoshua/finances/controllers"
 )
 
 type Server struct {
@@ -15,4 +16,8 @@ func NewServer(router *gin.Engine, conn *pgx.Conn) *Server {
 		Router: router,
 		Conn: conn,
 	}
+}
+
+func (server *Server) SetupRoutes() {
+	server.Router.GET("/", controllers.Index)
 }

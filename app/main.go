@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,8 @@ func main() {
 	}
 
 	// Get DB connection
+	fmt.Println(config.GetConnString())
+	return
 	conn, err := db.NewConn(config.GetConnString())
 	if err != nil {
 		log.Printf("Error connecting to database: %v\n", err)
