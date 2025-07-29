@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -18,18 +17,16 @@ func main() {
 		return
 	}
 
-	// Get DB connection
-	fmt.Println(config.GetConnString())
-	return
 	conn, err := db.NewConn(config.GetConnString())
 	if err != nil {
 		log.Printf("Error connecting to database: %v\n", err)
 		return
 	}
+	router := gin.Default()
+
+	server := models.NewServer(router, conn)
 
 	// Run server
-	router := gin.Default()
-	
-	server := models.NewServer(router, conn)
-	server.Router.Run()
+	server.SetupRoutes()
+	server.Router.Run(":"+config.ServerPort)
 }
