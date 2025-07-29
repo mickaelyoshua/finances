@@ -36,3 +36,6 @@ tmp/
 
 # Pgadmin data
 pgadmin_data/
+
+# Templ generated files
+**/*_templ.go
