@@ -6,6 +6,8 @@ import (
 
 	"github.com/a-h/templ"
 	"github.com/gin-gonic/gin"
+	"github.com/mickaelyoshua/finances/models"
+	"github.com/mickaelyoshua/finances/util"
 	"github.com/mickaelyoshua/finances/views"
 )
 
@@ -26,10 +28,23 @@ func RegisterView(ctx *gin.Context) {
 	HandleRenderError(err)
 }
 func Register(ctx *gin.Context) {
-	username := ctx.Request.Form("username")
-	email := ctx.Request.Form("email")
-	password := ctx.Request.Form("password")
-	confirmPassword := ctx.Request.Form("confirm-password")
+	username := ctx.PostForm("username")
+	email := ctx.PostForm("email")
+	password := ctx.PostForm("password")
+	confirmPassword := ctx.PostForm("confirm-password")
+
+	if password != confirmPassword {
+		err := Render(ctx, http.StatusBadRequest, views.RegisterForm())
+		HandleRenderError(err)
+		return
+	}
+
+	hashedPass, err := util.HashPassword(password)
+	if err != nil {
+		ctx.Status(http.StatusInternalServerError)
+		return
+	}
+	models.NewUser(username, email, hashedPass)
 }
 
 func LoginView(ctx *gin.Context) {

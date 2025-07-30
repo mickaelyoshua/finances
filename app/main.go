@@ -4,6 +4,7 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mickaelyoshua/finances/controllers"
 	"github.com/mickaelyoshua/finances/db"
 	"github.com/mickaelyoshua/finances/models"
 	"github.com/mickaelyoshua/finances/util"
@@ -27,6 +28,18 @@ func main() {
 	server := models.NewServer(router, conn)
 
 	// Run server
-	server.SetupRoutes()
+	SetupRoutes(server)
 	server.Router.Run(":"+config.ServerPort)
+}
+
+
+func SetupRoutes(server *models.Server) {
+	server.Router.Static("/public", "./public")
+	server.Router.GET("/", controllers.Index)
+
+	// Authentication
+	server.Router.GET("/register", controllers.RegisterView)
+	server.Router.POST("/register", controllers.Register)
+
+	server.Router.GET("/login", controllers.LoginView)
 }
