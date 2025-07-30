@@ -24,95 +24,6 @@ func HandleRenderError(err error) {
 	}
 }
 
-// Authentication
-func RegisterView(ctx *gin.Context) {
-	err := Render(ctx, http.StatusOK, views.Register())
-	HandleRenderError(err)
-}
-
-func validateCreateUser(username, email, password, confirmPassword string) map[string]string {
-	errors := make(map[string]string)
-
-	if len(username) == 0 {
-		errors["username"] = "Username is required."
-	} else if len(username) < 3 {
-		errors["username"] = "Username must be at least 3 characters long."
-	}
-
-	if len(email) == 0 {
-		errors["email"] = "Email is required."
-	} else if !util.ValidEmail(email) {
-		errors["email"] = "Please provide a valid email address."
-	}
-
-	if len(password) == 0 {
-		errors["password"] = "Password is required."
-	} else if len(password) < 6 {
-		errors["password"] = "Password must be at least 6 characters long."
-	}
-
-	if len(confirmPassword) == 0 {
-		errors["confirmPassword"] = "Password confirmation is required."
-	} else if password != confirmPassword {
-		errors["confirmPassword"] = "Passwords do not match."
-	}
-
-	return errors
-}
-
-func Register(server *models.Server) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		username := ctx.PostForm("username")
-		email := ctx.PostForm("email")
-		password := ctx.PostForm("password")
-		confirmPassword := ctx.PostForm("confirm-password")
-
-		errors := validateCreateUser(username, email, password, confirmPassword)
-
-		if len(errors) > 0 {
-			formData := views.RegisterFormData{
-				Values: map[string]string{
-					"username": username,
-					"email":    email,
-				},
-				Errors: errors,
-			}
-			err := Render(ctx, http.StatusBadRequest, views.RegisterForm(formData))
-			HandleRenderError(err)
-			return
-		}
-
-		hashedPass, err := util.HashPassword(password)
-		if err != nil {
-			ctx.String(http.StatusInternalServerError, "Error hashing password %v", err)
-			return
-		}
-
-		userParams := sqlc.CreateUserParams{
-			Username: username,
-			Email: email,
-			PasswordHash: hashedPass,
-		}
-		user, err := server.Querier.CreateUser(ctx, userParams)
-		if err != nil {
-			ctx.String(http.StatusInternalServerError, "Error creating user %v", err)
-			return
-		}
-
-		err = Render(ctx, http.StatusOK, views.Index(user))
-		HandleRenderError(err)
-
-		ctx.SetCookie("id", user.ID.String(), 3600, "/", "localhost", false, true)
-
-		ctx.Redirect(http.StatusSeeOther, "/")
-	}
-}
-
-func LoginView(ctx *gin.Context) {
-	err := Render(ctx, http.StatusOK, views.Login())
-	HandleRenderError(err)
-}
-
 func Index(server *models.Server) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		idStr, err := ctx.Cookie("id")
@@ -143,3 +54,94 @@ func Index(server *models.Server) gin.HandlerFunc {
 		HandleRenderError(err)
 	}
 }
+
+								//Authentication
+func RegisterView(ctx *gin.Context) {
+	err := Render(ctx, http.StatusOK, views.Register())
+	HandleRenderError(err)
+}
+
+func validateRegisterParams(username, email, password, confirmPassword string) map[string]string {
+	errors := make(map[string]string)
+
+	if len(username) == 0 {
+		errors["username"] = "Username is required."
+	} else if len(username) < 3 {
+		errors["username"] = "Username must be at least 3 characters long."
+	}
+
+	if len(email) == 0 {
+		errors["email"] = "Email is required."
+	} else if !util.ValidEmail(email) {
+		errors["email"] = "Please provide a valid email address."
+	}
+
+	if len(password) == 0 {
+		errors["password"] = "Password is required."
+	} else if len(password) < 6 {
+		errors["password"] = "Password must be at least 6 characters long."
+	}
+
+	if len(confirmPassword) == 0 {
+		errors["confirmPassword"] = "Password confirmation is required."
+	} else if password != confirmPassword {
+		errors["confirmPassword"] = "Passwords do not match."
+	}
+
+	return errors
+}
+func Register(server *models.Server) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		// Get form params
+		username := ctx.PostForm("username")
+		email := ctx.PostForm("email")
+		password := ctx.PostForm("password")
+		confirmPassword := ctx.PostForm("confirm-password")
+
+		// Validate params
+		errors := validateRegisterParams(username, email, password, confirmPassword)
+		if len(errors) > 0 {
+			formData := views.RegisterFormData{
+				Values: map[string]string{
+					"username": username,
+					"email":    email,
+				},
+				Errors: errors,
+			}
+			err := Render(ctx, http.StatusBadRequest, views.RegisterForm(formData))
+			HandleRenderError(err)
+			return
+		}
+
+		// Hash password
+		hashedPass, err := util.HashPassword(password)
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, "Error hashing password %v", err)
+			return
+		}
+		log.Println("Hash: ", hashedPass)
+
+		// Create user
+		userParams := sqlc.CreateUserParams{
+			Username: username,
+			Email: email,
+			PasswordHash: hashedPass,
+		}
+		user, err := server.Querier.CreateUser(ctx, userParams)
+		log.Println("User: ", user)
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, "Error creating user %v", err)
+			return
+		}
+
+		// Redirect
+		ctx.SetCookie("id", user.ID.String(), 3600, "/", "localhost", false, true)
+		ctx.Redirect(http.StatusSeeOther, "/")
+	}
+}
+
+func LoginView(ctx *gin.Context) {
+	err := Render(ctx, http.StatusOK, views.Login())
+	HandleRenderError(err)
+}
+
