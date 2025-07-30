@@ -19,5 +19,8 @@ func NewServer(router *gin.Engine, conn *pgx.Conn) *Server {
 }
 
 func (server *Server) SetupRoutes() {
+	server.Router.Static("/public", "./public")
 	server.Router.GET("/", controllers.Index)
+	server.Router.GET("/login", controllers.LoginView)
+	server.Router.GET("/register", controllers.RegisterView)
 }

@@ -20,6 +20,17 @@ func HandleRenderError(err error) {
 	}
 }
 
+// Authentication
+func RegisterView(ctx *gin.Context) {
+	err := Render(ctx, http.StatusOK, views.Register())
+	HandleRenderError(err)
+}
+
+func LoginView(ctx *gin.Context) {
+	err := Render(ctx, http.StatusOK, views.Login())
+	HandleRenderError(err)
+}
+
 func Index(ctx *gin.Context) {
 	err := Render(ctx, http.StatusOK, views.Index())
 	HandleRenderError(err)
