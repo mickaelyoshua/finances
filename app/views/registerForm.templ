@@ -6,7 +6,7 @@ type RegisterFormData struct {
 }
 
 templ RegisterForm(data RegisterFormData) {
-	<form method="post" hx-target-4xx="this" hx-swap="outerHTML">
+	<form hx-post="/register" hx-target-4xx="this" hx-swap="outerHTML">
 		<div>
 			<label for="username">Your username</label>
 			<input type="text" name="username" id="username" value={ data.Values["username"] } placeholder="name" required=""/>

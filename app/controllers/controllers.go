@@ -136,7 +136,7 @@ func Register(server *models.Server) gin.HandlerFunc {
 
 		// Redirect
 		ctx.SetCookie("id", user.ID.String(), 3600, "/", "localhost", false, true)
-		ctx.Redirect(http.StatusSeeOther, "/")
+		ctx.Redirect(http.StatusSeeOther, "/login")
 	}
 }
 
