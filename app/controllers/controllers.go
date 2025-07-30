@@ -6,6 +6,7 @@ import (
 
 	"github.com/a-h/templ"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/mickaelyoshua/finances/db/sqlc"
 	"github.com/mickaelyoshua/finances/models"
 	"github.com/mickaelyoshua/finances/util"
@@ -98,7 +99,12 @@ func Register(server *models.Server) gin.HandlerFunc {
 			return
 		}
 
-		err = Render(ctx, http.StatusOK, views.Index())
+		err = Render(ctx, http.StatusOK, views.Index(user))
+		HandleRenderError(err)
+
+		ctx.SetCookie("id", user.ID.String(), 3600, "/", "localhost", false, true)
+
+		ctx.Redirect(http.StatusSeeOther, "/")
 	}
 }
 
@@ -107,7 +113,33 @@ func LoginView(ctx *gin.Context) {
 	HandleRenderError(err)
 }
 
-func Index(ctx *gin.Context) {
-	err := Render(ctx, http.StatusOK, views.Index())
-	HandleRenderError(err)
+func Index(server *models.Server) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		idStr, err := ctx.Cookie("id")
+		if err != nil {
+			log.Printf("Error getting cookie: %v\n", err)
+			return
+		}
+		id, err := uuid.FromBytes([]byte(idStr))
+		if err != nil {
+			log.Printf("Error getting uuid from string: %v\n", err)
+			return
+		}
+
+		user, err := server.Querier.GetUser(ctx, id)
+		if err != nil {
+			log.Printf("Error getting user: %v\n", err)
+			return
+		}
+
+		u := sqlc.CreateUserRow{
+			ID: user.ID,
+			Username: user.Username,
+			Email: user.Email,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+		}
+		err = Render(ctx, http.StatusOK, views.Index(u))
+		HandleRenderError(err)
+	}
 }

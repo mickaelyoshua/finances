@@ -40,7 +40,7 @@ func main() {
 
 func SetupRoutes(server *models.Server) {
 	server.Router.Static("/public", "./public")
-	server.Router.GET("/", controllers.Index)
+	server.Router.GET("/", controllers.Index(server))
 
 	// Authentication
 	server.Router.GET("/register", controllers.RegisterView)
