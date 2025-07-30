@@ -25,6 +25,12 @@ func RegisterView(ctx *gin.Context) {
 	err := Render(ctx, http.StatusOK, views.Register())
 	HandleRenderError(err)
 }
+func Register(ctx *gin.Context) {
+	username := ctx.Request.Form("username")
+	email := ctx.Request.Form("email")
+	password := ctx.Request.Form("password")
+	confirmPassword := ctx.Request.Form("confirm-password")
+}
 
 func LoginView(ctx *gin.Context) {
 	err := Render(ctx, http.StatusOK, views.Login())
