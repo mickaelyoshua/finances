@@ -6,6 +6,7 @@ import (
 
 	"github.com/a-h/templ"
 	"github.com/gin-gonic/gin"
+	"github.com/mickaelyoshua/finances/db/sqlc"
 	"github.com/mickaelyoshua/finances/models"
 	"github.com/mickaelyoshua/finances/util"
 	"github.com/mickaelyoshua/finances/views"
@@ -58,33 +59,47 @@ func validateCreateUser(username, email, password, confirmPassword string) map[s
 	return errors
 }
 
-func Register(ctx *gin.Context) {
-	username := ctx.PostForm("username")
-	email := ctx.PostForm("email")
-	password := ctx.PostForm("password")
-	confirmPassword := ctx.PostForm("confirm-password")
+func Register(server *models.Server) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		username := ctx.PostForm("username")
+		email := ctx.PostForm("email")
+		password := ctx.PostForm("password")
+		confirmPassword := ctx.PostForm("confirm-password")
 
-	errors := validateCreateUser(username, email, password, confirmPassword)
+		errors := validateCreateUser(username, email, password, confirmPassword)
 
-	if len(errors) > 0 {
-		formData := views.RegisterFormData{
-			Values: map[string]string{
-				"username": username,
-				"email":    email,
-			},
-			Errors: errors,
+		if len(errors) > 0 {
+			formData := views.RegisterFormData{
+				Values: map[string]string{
+					"username": username,
+					"email":    email,
+				},
+				Errors: errors,
+			}
+			err := Render(ctx, http.StatusBadRequest, views.RegisterForm(formData))
+			HandleRenderError(err)
+			return
 		}
-		err := Render(ctx, http.StatusBadRequest, views.RegisterForm(formData))
-		HandleRenderError(err)
-		return
-	}
 
-	hashedPass, err := util.HashPassword(password)
-	if err != nil {
-		ctx.Status(http.StatusInternalServerError)
-		return
+		hashedPass, err := util.HashPassword(password)
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, "Error hashing password %v", err)
+			return
+		}
+
+		userParams := sqlc.CreateUserParams{
+			Username: username,
+			Email: email,
+			PasswordHash: hashedPass,
+		}
+		user, err := server.Querier.CreateUser(ctx, userParams)
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, "Error creating user %v", err)
+			return
+		}
+
+		err = Render(ctx, http.StatusOK, views.Index())
 	}
-	models.NewUser(username, email, hashedPass)
 }
 
 func LoginView(ctx *gin.Context) {

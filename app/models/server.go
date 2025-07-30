@@ -2,17 +2,17 @@ package models
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
+	"github.com/mickaelyoshua/finances/db/sqlc"
 )
 
 type Server struct {
 	Router *gin.Engine
-	Conn *pgx.Conn
+	Querier *sqlc.Queries
 }
 
-func NewServer(router *gin.Engine, conn *pgx.Conn) *Server {
+func NewServer(router *gin.Engine, querier *sqlc.Queries) *Server {
 	return &Server{
 		Router: router,
-		Conn: conn,
+		Querier: querier,
 	}
 }

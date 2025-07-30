@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mickaelyoshua/finances/controllers"
 	"github.com/mickaelyoshua/finances/db"
+	"github.com/mickaelyoshua/finances/db/sqlc"
 	"github.com/mickaelyoshua/finances/models"
 	"github.com/mickaelyoshua/finances/util"
 )
@@ -18,20 +20,23 @@ func main() {
 		return
 	}
 
+	ctx := context.Background()
 	conn, err := db.NewConn(config.GetConnString())
 	if err != nil {
 		log.Printf("Error connecting to database: %v\n", err)
 		return
 	}
+	defer conn.Close(ctx)
+
 	router := gin.Default()
 
-	server := models.NewServer(router, conn)
+	querier := sqlc.New(conn)
+	server := models.NewServer(router, querier)
 
 	// Run server
 	SetupRoutes(server)
 	server.Router.Run(":"+config.ServerPort)
 }
-
 
 func SetupRoutes(server *models.Server) {
 	server.Router.Static("/public", "./public")
@@ -39,7 +44,7 @@ func SetupRoutes(server *models.Server) {
 
 	// Authentication
 	server.Router.GET("/register", controllers.RegisterView)
-	server.Router.POST("/register", controllers.Register)
+	server.Router.POST("/register", controllers.Register(server))
 
 	server.Router.GET("/login", controllers.LoginView)
 }
