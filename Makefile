@@ -10,7 +10,7 @@ stop-pgadmin:
 	docker-compose stop pgadmin
 
 run-app:
-	air -c app/.air.toml
+	cd app && air
 
 migrate-create:
 	migrate create -ext sql -dir ${MIGRATION_DIR} -seq schema
