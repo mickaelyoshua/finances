@@ -39,3 +39,6 @@ pgadmin_data/
 
 # Templ generated files
 **/*_templ.go
+
+# Node modules
+node_modules/
