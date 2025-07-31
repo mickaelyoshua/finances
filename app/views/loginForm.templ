@@ -1,19 +1,59 @@
 package views
 
-templ LoginForm() {
+import "fmt"
 
-	<form hx-post="/login" hx-swap="outerHTML">
+type LoginFormData struct {
+	Values map[string]string
+	Errors map[string]string
+}
+
+templ LoginForm(data LoginFormData) {
+	<form hx-post="/login" hx-target="#main-content" hx-swap="innerHTML">
 		<div>
 			<label for="email">Your email</label>
-			<input type="email" name="email" id="email" placeholder="name@company.com" required=""/>
+			<div class="field-container">
+				<input
+					type="email"
+					name="email"
+					id="email"
+					placeholder="name@company.com"
+					required
+					autocomplete="email"
+					aria-describedby="email-error"
+					aria-invalid={ fmt.Sprint(data.Errors["email"] != "") }
+				/>
+				<p id="email-error" class="error-message">{ data.Errors["email"] }</p>
+			</div>
 		</div>
 		<div>
 			<label for="password">Password</label>
-			<input type="password" name="password" id="password" placeholder="••••••••" required=""/>
+			<div class="field-container">
+				<input
+					type="password"
+					name="password"
+					id="password"
+					placeholder="••••••••"
+					required
+					autocomplete="current-password"
+					aria-describedby="password-error"
+					aria-invalid={ fmt.Sprint(data.Errors["password"] != "") }
+				/>
+				<p id="password-error" class="error-message">{ data.Errors["password"] }</p>
+			</div>
 		</div>
 		<button type="submit">Sign in</button>
 		<p>
-		Don’t have an account yet? <a href="/register">Sign up</a>
+			Don’t have an account yet? <a href="/register">Sign up</a>
 		</p>
-		</form>
+	</form>
+	<style>
+		.field-container {
+			display: flex;
+			align-items: baseline;
+			gap: 0.5rem;
+		}
+		.error-message {
+			min-height: 1rem;
+		}
+	</style>
 }

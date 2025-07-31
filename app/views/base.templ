@@ -11,7 +11,7 @@ templ Base() {
 			<script src="/public/scripts/htmx.min.js"></script>
 			<script src="/public/scripts/response-targets.js"></script>
 			</head>
-			<body hx-ext="response-targets">
+			<body hx-boot="true" hx-ext="response-targets">
 			{ children... }
 		</body>
 	</html>

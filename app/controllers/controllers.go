@@ -100,7 +100,7 @@ func Register(server *models.Server) gin.HandlerFunc {
 
 		// Validate params
 		errors := validateRegisterParams(username, email, password, confirmPassword)
-		if len(errors) > 0 {
+		if errors["username"] != "" || errors["email"] != "" || errors["password"] != "" || errors["confirmPassword"] != "" {
 			formData := views.RegisterFormData{
 				Values: map[string]string{
 					"username": username,
@@ -119,7 +119,6 @@ func Register(server *models.Server) gin.HandlerFunc {
 			ctx.String(http.StatusInternalServerError, "Error hashing password %v", err)
 			return
 		}
-		log.Println("Hash: ", hashedPass)
 
 		// Create user
 		userParams := sqlc.CreateUserParams{
@@ -135,8 +134,7 @@ func Register(server *models.Server) gin.HandlerFunc {
 		}
 
 		// Redirect
-		ctx.SetCookie("id", user.ID.String(), 3600, "/", "localhost", false, true)
-		ctx.Redirect(http.StatusSeeOther, "/login")
+		 ctx.Redirect(http.StatusSeeOther, "/login")
 	}
 }
 

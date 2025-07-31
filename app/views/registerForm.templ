@@ -1,43 +1,93 @@
 package views
 
+import "fmt"
+
 type RegisterFormData struct {
 	Values map[string]string
 	Errors map[string]string
 }
 
 templ RegisterForm(data RegisterFormData) {
-	<form hx-post="/register" hx-target-4xx="this" hx-swap="outerHTML">
+	<form hx-post="/register" hx-target-4xx="this" hx-target-5xx="this" hx-swap="outerHTML">
 		<div>
 			<label for="username">Your username</label>
-			<input type="text" name="username" id="username" value={ data.Values["username"] } placeholder="name" required=""/>
-			if data.Errors["username"] != "" {
-				<p>{ data.Errors["username"] }</p>
-			}
+			<div class="field-container">
+				<input
+					type="text"
+					name="username"
+					id="username"
+					value={ data.Values["username"] }
+					placeholder="name"
+					required
+					autocomplete="username"
+					aria-describedby="username-error"
+					aria-invalid={ fmt.Sprint(data.Errors["username"] != "") }
+				/>
+				<p id="username-error" class="error-message">{ data.Errors["username"] }</p>
+			</div>
 		</div>
 		<div>
 			<label for="email">Your email</label>
-			<input type="email" name="email" id="email" value={ data.Values["email"] } placeholder="name@company.com" required=""/>
-			if data.Errors["email"] != "" {
-				<p>{ data.Errors["email"] }</p>
-			}
+			<div class="field-container">
+				<input
+					type="email"
+					name="email"
+					id="email"
+					value={ data.Values["email"] }
+					placeholder="name@company.com"
+					required
+					autocomplete="email"
+					aria-describedby="email-error"
+					aria-invalid={ fmt.Sprint(data.Errors["email"] != "") }
+				/>
+				<p id="email-error" class="error-message">{ data.Errors["email"] }</p>
+			</div>
 		</div>
 		<div>
 			<label for="password">Password</label>
-			<input type="password" name="password" id="password" placeholder="••••••••" required=""/>
-			if data.Errors["password"] != "" {
-				<p>{ data.Errors["password"] }</p>
-			}
+			<div class="field-container">
+				<input
+					type="password"
+					name="password"
+					id="password"
+					placeholder="••••••••"
+					required
+					autocomplete="new-password"
+					aria-describedby="password-error"
+					aria-invalid={ fmt.Sprint(data.Errors["password"] != "") }
+				/>
+				<p id="password-error" class="error-message">{ data.Errors["password"] }</p>
+			</div>
 		</div>
 		<div>
 			<label for="confirm-password">Confirm password</label>
-			<input type="password" name="confirm-password" id="confirm-password" placeholder="••••••••" required=""/>
-			if data.Errors["confirmPassword"] != "" {
-				<p>{ data.Errors["confirmPassword"] }</p>
-			}
+			<div class="field-container">
+				<input
+					type="password"
+					name="confirm-password"
+					id="confirm-password"
+					placeholder="••••••••"
+					required
+					autocomplete="new-password"
+					aria-describedby="confirm-password-error"
+					aria-invalid={ fmt.Sprint(data.Errors["confirmPassword"] != "") }
+				/>
+				<p id="confirm-password-error" class="error-message">{ data.Errors["confirmPassword"] }</p>
+			</div>
 		</div>
 		<button type="submit">Create an account</button>
 		<p>
-		Already have an account? <a href="/login">Login here</a>
+			Already have an account? <a href="/login">Login here</a>
 		</p>
-		</form>
+	</form>
+	<style>
+		.field-container {
+			display: flex;
+			align-items: baseline;
+			gap: 0.5rem;
+		}
+		.error-message {
+			min-height: 1rem;
+		}
+	</style>
 }
