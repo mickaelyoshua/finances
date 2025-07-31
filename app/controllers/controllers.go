@@ -62,7 +62,7 @@ func RegisterView(ctx *gin.Context) {
 }
 
 func validateRegisterParams(username, email, password, confirmPassword string) map[string]string {
-	errors := make(map[string]string)
+	errors := make(map[string]string, 4)
 
 	if len(username) == 0 {
 		errors["username"] = "Username is required."
@@ -143,3 +143,45 @@ func LoginView(ctx *gin.Context) {
 	HandleRenderError(err)
 }
 
+func validateLoginParams(email, password string) map[string]string {
+	errors := make(map[string]string, 2)
+	
+	if len(email) == 0 {
+		errors["email"] = "Email is required."
+	} else if !util.ValidEmail(email) {
+		errors["email"] = "Please provide a valid email address."
+	}
+
+	if len(password) == 0 {
+		errors["password"] = "Password is required."
+	} else if len(password) < 6 {
+		errors["password"] = "Password must be at least 6 characters long."
+	}
+
+	return errors
+}
+func Login(server *models.Server) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		// Get form params
+		email := ctx.PostForm("email")
+		password := ctx.PostForm("password")
+
+		// Search user
+
+		// Validate params
+		errors := validateLoginParams(email, password)
+		if errors["email"] != "" || errors["password"] != "" {
+			formData := views.LoginFormData{
+				Values: map[string]string{
+					"email":    email,
+				},
+				Errors: errors,
+			}
+			err := Render(ctx, http.StatusBadRequest, views.LoginForm(formData))
+			HandleRenderError(err)
+			return
+		}
+
+
+	}
+}
