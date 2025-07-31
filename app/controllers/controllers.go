@@ -126,8 +126,7 @@ func Register(server *models.Server) gin.HandlerFunc {
 			Email: email,
 			PasswordHash: hashedPass,
 		}
-		user, err := server.Querier.CreateUser(ctx, userParams)
-		log.Println("User: ", user)
+		_, err = server.Querier.CreateUser(ctx, userParams)
 		if err != nil {
 			ctx.String(http.StatusInternalServerError, "Error creating user %v", err)
 			return
