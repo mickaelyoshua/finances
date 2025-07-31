@@ -8,7 +8,7 @@ type RegisterFormData struct {
 }
 
 templ RegisterForm(data RegisterFormData) {
-	<form hx-post="/register" hx-target="body" hx-target-4xx="this" hx-target-5xx="this" hx-swap="outerHTML">
+	<form hx-post="/register" hx-target-4xx="this" hx-target-5xx="this" hx-swap="outerHTML">
 		<div>
 			<label for="username">Your username</label>
 			<div class="field-container">

@@ -133,7 +133,8 @@ func Register(server *models.Server) gin.HandlerFunc {
 		}
 
 		// Redirect
-		 ctx.Redirect(http.StatusSeeOther, "/login")
+		ctx.Header("HX-Redirect", "/login")
+		ctx.Status(http.StatusNoContent)
 	}
 }
 
