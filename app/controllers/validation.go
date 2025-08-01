@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+	"github.com/mickaelyoshua/finances/db/sqlc"
 	"github.com/mickaelyoshua/finances/models"
 	"github.com/mickaelyoshua/finances/util"
 )
@@ -50,7 +51,7 @@ func validateRegisterParams(server *models.Server, ctx *gin.Context, name, email
 	}
 
 	if err != pgx.ErrNoRows {
-		log.Printf("Database error while searching for email: %v", err)
+		log.Printf("Database error while searching for email: %v\n\n", err)
 		return nil, err
 	}
 
@@ -59,8 +60,9 @@ func validateRegisterParams(server *models.Server, ctx *gin.Context, name, email
 }
 
 
-func validateLoginParams(server *models.Server, ctx *gin.Context, email, password string) (map[string]string, error) {
+func validateLoginParams(server *models.Server, ctx *gin.Context, email, password string) (sqlc.GetUserByEmailRow, map[string]string, error) {
 	errs := make(map[string]string, 3)
+	var emptyUser sqlc.GetUserByEmailRow
 
 	if len(email) == 0 {
 		errs["email"] = "Email is required"
@@ -76,24 +78,25 @@ func validateLoginParams(server *models.Server, ctx *gin.Context, email, passwor
 
 	// If there are already validation errors, no need to check the database.
 	if len(errs) > 0 {
-		return errs, nil
+		return emptyUser, errs, nil
 	}
 
 	user, err := server.Querier.GetUserByEmail(ctx, email)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			errs["login"] = "Email or password incorrect"
-			return errs, nil
+			return emptyUser, errs, nil
 		}
 
-		log.Printf("Database error while getting user by email: %v", err)
-		return nil, err
+		log.Printf("Database error while getting user by email: %v\n\n", err)
+		return emptyUser, nil, err
 	}
 
 	// User was found, now check password.
 	if !util.PassEqual(user.PasswordHash, password) {
 		errs["login"] = "Email or password incorrect"
+		return emptyUser, errs, nil
 	}
 
-	return errs, nil
+	return user, nil, nil
 }

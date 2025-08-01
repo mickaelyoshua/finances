@@ -63,24 +63,27 @@ func RegisterView(ctx *gin.Context) {
 
 func Register(server *models.Server) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
+		// Get form params
 		name := ctx.PostForm("name")
 		email := ctx.PostForm("email")
 		password := ctx.PostForm("password")
 		confirmPassword := ctx.PostForm("confirm-password")
 
 		// Validate params
-		errors, err := validateRegisterParams(server, ctx, name, email, password, confirmPassword)
+		validationErrors, err := validateRegisterParams(server, ctx, name, email, password, confirmPassword)
 		if err != nil {
-			ctx.String(http.StatusInternalServerError, "Error validating Form inputs %v", err)
+			log.Printf("Error validating register params: %v\n\n", err)
+			err := Render(ctx, http.StatusInternalServerError, views.FiveHundred())
+			HandleRenderError(err)
 			return
 		}
-		if errors["name"] != "" || errors["email"] != "" || errors["password"] != "" || errors["confirmPassword"] != "" {
+		if validationErrors != nil {
 			formData := views.RegisterFormData{
 				Values: map[string]string{
 					"name": name,
 					"email":    email,
 				},
-				Errors: errors,
+				Errors: validationErrors,
 			}
 			err := Render(ctx, http.StatusBadRequest, views.RegisterForm(formData))
 			HandleRenderError(err)
@@ -90,7 +93,9 @@ func Register(server *models.Server) gin.HandlerFunc {
 		// Hash password
 		hashedPass, err := util.HashPassword(password)
 		if err != nil {
-			ctx.String(http.StatusInternalServerError, "Error hashing password %v", err)
+			log.Printf("Error hashing password: %v\n\n", err)
+			err := Render(ctx, http.StatusInternalServerError, views.FiveHundred())
+			HandleRenderError(err)
 			return
 		}
 
@@ -102,7 +107,9 @@ func Register(server *models.Server) gin.HandlerFunc {
 		}
 		_, err = server.Querier.CreateUser(ctx, userParams)
 		if err != nil {
-			ctx.String(http.StatusInternalServerError, "Error creating user %v", err)
+			log.Printf("Database error creating user: %v\n\n", err)
+			err := Render(ctx, http.StatusInternalServerError, views.FiveHundred())
+			HandleRenderError(err)
 			return
 		}
 
@@ -123,26 +130,36 @@ func Login(server *models.Server) gin.HandlerFunc {
 		email := ctx.PostForm("email")
 		password := ctx.PostForm("password")
 
-		// Search user
-
 		// Validate params
-		errors, err := validateLoginParams(server, ctx, email, password)
+		user, validationErrors, err := validateLoginParams(server, ctx, email, password)
 		if err != nil {
-			ctx.String(http.StatusInternalServerError, "Error validating Form inputs %v", err)
+			log.Printf("Error validating login params: %v\n\n", err)
+			err := Render(ctx, http.StatusInternalServerError, views.FiveHundred())
+			HandleRenderError(err)
 			return
 		}
-		if errors["email"] != "" || errors["password"] != "" || errors["login"] != "" {
+		if validationErrors != nil {
 			formData := views.LoginFormData{
-				Values: map[string]string{
-					"email":    email,
-				},
-				Errors: errors,
+				Email: email,
+				Errors: validationErrors,
 			}
 			err := Render(ctx, http.StatusBadRequest, views.LoginForm(formData))
 			HandleRenderError(err)
 			return
 		}
 
+		// Set cookie
+		cookie := http.Cookie{
+			Name: "id",
+			Value: user.ID.String(),
+			MaxAge: 3600,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		}
+		http.SetCookie(ctx.Writer, &cookie)
 
+		// Redirect
+		ctx.Header("HX-Redirect", "/")
+		ctx.Status(http.StatusNoContent)
 	}
 }
