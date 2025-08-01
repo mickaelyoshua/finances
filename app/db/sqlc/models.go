@@ -47,7 +47,7 @@ type SubcategoryExpense struct {
 
 type User struct {
 	ID           uuid.UUID          `json:"id"`
-	Username     string             `json:"username"`
+	Name         string             `json:"name"`
 	Email        string             `json:"email"`
 	PasswordHash string             `json:"password_hash"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`

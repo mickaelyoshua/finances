@@ -1,5 +1,5 @@
 MIGRATION_DIR=./app/db/migration/
-DB_URL=${DATABASE_URL}
+DB_URL=${FINANCES_DATABASE_URL}
 
 PHONY: run-pgadmin stop-pgadmin run-app migrate-create migrate-up migrate-down
 

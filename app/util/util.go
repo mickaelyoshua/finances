@@ -1,6 +1,8 @@
 package util
 
-import "regexp"
+import (
+	"regexp"
+)
 
 func ValidEmail(email string) bool {
 	// Regular expression for email validation

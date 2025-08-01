@@ -37,15 +37,15 @@ func Index(server *models.Server) gin.HandlerFunc {
 			return
 		}
 
-		user, err := server.Querier.GetUser(ctx, id)
+		user, err := server.Querier.GetUserById(ctx, id)
 		if err != nil {
 			log.Printf("Error getting user: %v\n", err)
 			return
 		}
 
-		u := sqlc.CreateUserRow{
+		u := sqlc.GetUserByIdRow{
 			ID: user.ID,
-			Username: user.Username,
+			Name: user.Name,
 			Email: user.Email,
 			CreatedAt: user.CreatedAt,
 			UpdatedAt: user.UpdatedAt,
@@ -61,49 +61,60 @@ func RegisterView(ctx *gin.Context) {
 	HandleRenderError(err)
 }
 
-func validateRegisterParams(username, email, password, confirmPassword string) map[string]string {
+func validateRegisterParams(server *models.Server, ctx *gin.Context, name, email, password, confirmPassword string) (map[string]string, error) {
 	errors := make(map[string]string, 4)
 
-	if len(username) == 0 {
-		errors["username"] = "Username is required."
-	} else if len(username) < 3 {
-		errors["username"] = "Username must be at least 3 characters long."
+	if len(name) == 0 {
+		errors["name"] = "Name is required"
+	} else if len(name) < 3 {
+		errors["name"] = "Name must be at least 3 characters long"
+	} else if len(name) > 50 {
+		errors["name"] = "Name must be at most 50 characters long"
 	}
 
+	result, err := server.Querier.SearchEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
 	if len(email) == 0 {
 		errors["email"] = "Email is required."
 	} else if !util.ValidEmail(email) {
-		errors["email"] = "Please provide a valid email address."
+		errors["email"] = "Please provide a valid email address"
+	} else if result != "" {
+		errors["email"] = "Email already taken"
 	}
 
 	if len(password) == 0 {
-		errors["password"] = "Password is required."
+		errors["password"] = "Password is required"
 	} else if len(password) < 6 {
-		errors["password"] = "Password must be at least 6 characters long."
+		errors["password"] = "Password must be at least 6 characters long"
 	}
 
 	if len(confirmPassword) == 0 {
-		errors["confirmPassword"] = "Password confirmation is required."
+		errors["confirmPassword"] = "Password confirmation is required"
 	} else if password != confirmPassword {
-		errors["confirmPassword"] = "Passwords do not match."
+		errors["confirmPassword"] = "Passwords do not match"
 	}
 
-	return errors
+	return errors, nil
 }
 func Register(server *models.Server) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		// Get form params
-		username := ctx.PostForm("username")
+		name := ctx.PostForm("name")
 		email := ctx.PostForm("email")
 		password := ctx.PostForm("password")
 		confirmPassword := ctx.PostForm("confirm-password")
 
 		// Validate params
-		errors := validateRegisterParams(username, email, password, confirmPassword)
-		if errors["username"] != "" || errors["email"] != "" || errors["password"] != "" || errors["confirmPassword"] != "" {
+		errors, err := validateRegisterParams(server, ctx, name, email, password, confirmPassword)
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, "Error validating Form inputs %v", err)
+			return
+		}
+		if errors["name"] != "" || errors["email"] != "" || errors["password"] != "" || errors["confirmPassword"] != "" {
 			formData := views.RegisterFormData{
 				Values: map[string]string{
-					"username": username,
+					"name": name,
 					"email":    email,
 				},
 				Errors: errors,
@@ -122,7 +133,7 @@ func Register(server *models.Server) gin.HandlerFunc {
 
 		// Create user
 		userParams := sqlc.CreateUserParams{
-			Username: username,
+			Name: name,
 			Email: email,
 			PasswordHash: hashedPass,
 		}
@@ -143,22 +154,36 @@ func LoginView(ctx *gin.Context) {
 	HandleRenderError(err)
 }
 
-func validateLoginParams(email, password string) map[string]string {
-	errors := make(map[string]string, 2)
-	
+func validateLoginParams(server *models.Server, ctx *gin.Context, email, password string) (map[string]string, error) {
+	errors := make(map[string]string, 3)
+
 	if len(email) == 0 {
-		errors["email"] = "Email is required."
+		errors["email"] = "Email is required"
 	} else if !util.ValidEmail(email) {
-		errors["email"] = "Please provide a valid email address."
+		errors["email"] = "Please provide a valid email address"
 	}
 
 	if len(password) == 0 {
-		errors["password"] = "Password is required."
+		errors["password"] = "Password is required"
 	} else if len(password) < 6 {
-		errors["password"] = "Password must be at least 6 characters long."
+		errors["password"] = "Password must be at least 6 characters long"
 	}
 
-	return errors
+	// If there are already validation errors, no need to check the database.
+	if len(errors) > 0 {
+		return errors, nil
+	}
+
+	user, err := server.Querier.GetUserByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+
+	if user.Email == "" || !util.PassEqual(user.PasswordHash, password) {
+		errors["login"] = "Email or password incorrect"
+	}
+
+	return errors, nil
 }
 func Login(server *models.Server) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
@@ -169,8 +194,12 @@ func Login(server *models.Server) gin.HandlerFunc {
 		// Search user
 
 		// Validate params
-		errors := validateLoginParams(email, password)
-		if errors["email"] != "" || errors["password"] != "" {
+		errors, err := validateLoginParams(server, ctx, email, password)
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, "Error validating Form inputs %v", err)
+			return
+		}
+		if errors["email"] != "" || errors["password"] != "" || errors["login"] != "" {
 			formData := views.LoginFormData{
 				Values: map[string]string{
 					"email":    email,

@@ -8,7 +8,7 @@ import (
 
 type User struct {
 	Id uuid.UUID `json:"id,omitempty"`
-	Username string `json:"username"`
+	Name string `json:"name"`
 	Email string `json:"email"`
 	PasswordHash string `json:"password_hash"`
 	CreatedAt time.Time `json:"created_at"`
@@ -16,9 +16,9 @@ type User struct {
 	DeletedAt time.Time `json:"deleted_at"`
 }
 
-func NewUser(username, email, password string) User {
+func NewUser(name, email, password string) User {
 	return User{
-		Username: username,
+		Name: name,
 		Email: email,
 		PasswordHash: password,
 	}

@@ -1,18 +1,30 @@
 -- name: CreateUser :one
 INSERT INTO users (
-    username,
+    name,
     email,
     password_hash
 ) VALUES (
     $1, $2, $3
 )
-RETURNING id, username, email, created_at, updated_at;
+RETURNING id, name, email, password_hash, created_at, updated_at;
 
--- name: GetUser :one
-SELECT id, username, email, created_at, updated_at
+-- name: GetUserById :one
+SELECT id, name, email, password_hash, created_at, updated_at
 FROM users
 WHERE id = $1 AND deleted_at IS NULL
 LIMIT 1;
+
+-- name: GetUserByEmail :one
+SELECT id, name, email, password_hash, created_at, updated_at
+FROM users
+WHERE email = $1 AND deleted_at IS NULL
+LIMIT 1;
+
+
+-- name: SearchEmail :one
+SELECT email
+FROM users
+WHERE email = $1 AND deleted_at IS NULL;
 
 -- -- name: ListUsers :many
 -- SELECT id, username, email, created_at, updated_at
@@ -23,13 +35,13 @@ LIMIT 1;
 -- name: UpdateUser :one
 UPDATE users
 SET
-    username = COALESCE(sqlc.narg('username'), username), -- COALESCE return the first non-nil value, if no "username" argument is provided will keep the current username
+    name = COALESCE(sqlc.narg('name'), name), -- COALESCE return the first non-nil value, if no "name" argument is provided will keep the current name
     email = COALESCE(sqlc.narg('email'), email),
     password_hash = COALESCE(sqlc.narg('password_hash'), password_hash),
     updated_at = NOW()
 WHERE
     id = sqlc.arg('id') AND deleted_at IS NULL
-RETURNING id, username, email, created_at, updated_at;
+RETURNING id, name, email, created_at, updated_at;
 
 -- name: SoftDeleteUser :exec
 UPDATE users

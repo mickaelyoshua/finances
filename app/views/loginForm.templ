@@ -42,6 +42,7 @@ templ LoginForm(data LoginFormData) {
 				<p id="password-error" class="error-message">{ data.Errors["password"] }</p>
 			</div>
 		</div>
+		<p id="login-error" class="error-message">{ data.Errors["login"] }</p>
 		<button type="submit">Sign in</button>
 		<p>
 			Don’t have an account yet? <a href="/register">Sign up</a>

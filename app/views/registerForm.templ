@@ -10,20 +10,20 @@ type RegisterFormData struct {
 templ RegisterForm(data RegisterFormData) {
 	<form hx-post="/register" hx-target-4xx="this" hx-target-5xx="this" hx-swap="outerHTML">
 		<div>
-			<label for="username">Your username</label>
+			<label for="name">Your name</label>
 			<div class="field-container">
 				<input
 					type="text"
-					name="username"
-					id="username"
-					value={ data.Values["username"] }
+					name="name"
+					id="name"
+					value={ data.Values["name"] }
 					placeholder="name"
 					required
-					autocomplete="username"
-					aria-describedby="username-error"
-					aria-invalid={ fmt.Sprint(data.Errors["username"] != "") }
+					autocomplete="name"
+					aria-describedby="name-error"
+					aria-invalid={ fmt.Sprint(data.Errors["name"] != "") }
 				/>
-				<p id="username-error" class="error-message">{ data.Errors["username"] }</p>
+				<p id="name-error" class="error-message">{ data.Errors["name"] }</p>
 			</div>
 		</div>
 		<div>

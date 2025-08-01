@@ -2,8 +2,8 @@ package views
 
 import "github.com/mickaelyoshua/finances/db/sqlc"
 
-templ Index(user sqlc.CreateUserRow) {
+templ Index(user sqlc.GetUserByIdRow) {
 	@Base() {
-		<h1>Hi { user.Username }</h1>
+		<h1>Hi { user.Name }</h1>
 	}
 }
