@@ -1,12 +1,14 @@
 package controllers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 
 	"github.com/a-h/templ"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mickaelyoshua/finances/db/sqlc"
 	"github.com/mickaelyoshua/finances/models"
 	"github.com/mickaelyoshua/finances/util"
@@ -62,41 +64,58 @@ func RegisterView(ctx *gin.Context) {
 }
 
 func validateRegisterParams(server *models.Server, ctx *gin.Context, name, email, password, confirmPassword string) (map[string]string, error) {
-	errors := make(map[string]string, 4)
+	errs := make(map[string]string, 4)
 
 	if len(name) == 0 {
-		errors["name"] = "Name is required"
+		errs["name"] = "Name is required"
 	} else if len(name) < 3 {
-		errors["name"] = "Name must be at least 3 characters long"
+		errs["name"] = "Name must be at least 3 characters long"
 	} else if len(name) > 50 {
-		errors["name"] = "Name must be at most 50 characters long"
+		errs["name"] = "Name must be at most 50 characters long"
+	}
+
+	if len(email) == 0 {
+		errs["email"] = "Email is required."
+	} else if !util.ValidEmail(email) {
+		errs["email"] = "Please provide a valid email address"
+	}
+
+	if len(password) == 0 {
+		errs["password"] = "Password is required"
+	} else if len(password) < 6 {
+		errs["password"] = "Password must be at least 6 characters long"
+	}
+
+	if len(confirmPassword) == 0 {
+		errs["confirmPassword"] = "Password confirmation is required"
+	} else if password != confirmPassword {
+		errs["confirmPassword"] = "Passwords do not match"
+	}
+
+	// If there are already validation errors, no need to check the database.
+	if len(errs) > 0 {
+		return errs, nil
 	}
 
 	result, err := server.Querier.SearchEmail(ctx, email)
 	if err != nil {
+		log.Println()
+		log.Println("error here")
+		log.Println()
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			log.Println()
+			log.Println("Error message", pgErr.Message)
+			log.Println("Error code", pgErr.Code)
+			log.Println()
+		}
 		return nil, err
 	}
-	if len(email) == 0 {
-		errors["email"] = "Email is required."
-	} else if !util.ValidEmail(email) {
-		errors["email"] = "Please provide a valid email address"
-	} else if result != "" {
-		errors["email"] = "Email already taken"
+	if result != "" {
+		errs["email"] = "Email already taken"
 	}
 
-	if len(password) == 0 {
-		errors["password"] = "Password is required"
-	} else if len(password) < 6 {
-		errors["password"] = "Password must be at least 6 characters long"
-	}
-
-	if len(confirmPassword) == 0 {
-		errors["confirmPassword"] = "Password confirmation is required"
-	} else if password != confirmPassword {
-		errors["confirmPassword"] = "Passwords do not match"
-	}
-
-	return errors, nil
+	return errs, nil
 }
 func Register(server *models.Server) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
@@ -155,23 +174,23 @@ func LoginView(ctx *gin.Context) {
 }
 
 func validateLoginParams(server *models.Server, ctx *gin.Context, email, password string) (map[string]string, error) {
-	errors := make(map[string]string, 3)
+	errs := make(map[string]string, 3)
 
 	if len(email) == 0 {
-		errors["email"] = "Email is required"
+		errs["email"] = "Email is required"
 	} else if !util.ValidEmail(email) {
-		errors["email"] = "Please provide a valid email address"
+		errs["email"] = "Please provide a valid email address"
 	}
 
 	if len(password) == 0 {
-		errors["password"] = "Password is required"
+		errs["password"] = "Password is required"
 	} else if len(password) < 6 {
-		errors["password"] = "Password must be at least 6 characters long"
+		errs["password"] = "Password must be at least 6 characters long"
 	}
 
 	// If there are already validation errors, no need to check the database.
-	if len(errors) > 0 {
-		return errors, nil
+	if len(errs) > 0 {
+		return errs, nil
 	}
 
 	user, err := server.Querier.GetUserByEmail(ctx, email)
@@ -180,10 +199,10 @@ func validateLoginParams(server *models.Server, ctx *gin.Context, email, passwor
 	}
 
 	if user.Email == "" || !util.PassEqual(user.PasswordHash, password) {
-		errors["login"] = "Email or password incorrect"
+		errs["login"] = "Email or password incorrect"
 	}
 
-	return errors, nil
+	return errs, nil
 }
 func Login(server *models.Server) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
