@@ -1,15 +1,12 @@
 package controllers
 
 import (
-	"errors"
 	"log"
 	"net/http"
 
 	"github.com/a-h/templ"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mickaelyoshua/finances/db/sqlc"
 	"github.com/mickaelyoshua/finances/models"
 	"github.com/mickaelyoshua/finances/util"
