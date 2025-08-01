@@ -8,6 +8,7 @@ import (
 	"github.com/a-h/templ"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mickaelyoshua/finances/db/sqlc"
 	"github.com/mickaelyoshua/finances/models"
@@ -97,24 +98,23 @@ func validateRegisterParams(server *models.Server, ctx *gin.Context, name, email
 		return errs, nil
 	}
 
-	result, err := server.Querier.SearchEmail(ctx, email)
-	if err != nil {
-		log.Println()
-		log.Println("error here")
-		log.Println()
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) {
-			log.Println()
-			log.Println("Error message", pgErr.Message)
-			log.Println("Error code", pgErr.Code)
-			log.Println()
-		}
-		return nil, err
-	}
-	if result != "" {
+	// Now, check the database to see if the email is already taken.
+	_, err := server.Querier.SearchEmail(ctx, email)
+	if err == nil {
+		// We found an email, so it's already taken. This is a validation error.
 		errs["email"] = "Email already taken"
+		return errs, nil
 	}
 
+	if err != pgx.ErrNoRows {
+		// This is a genuine database error, not a "not found" error.
+		// We should not expose this to the user, but return it to the handler.
+		log.Printf("Database error while searching for email: %v", err)
+		return nil, err
+	}
+
+	// If we get here, it means err was pgx.ErrNoRows, which is the success case
+	// (email is not taken). We return the (empty) errs map and a nil error.
 	return errs, nil
 }
 func Register(server *models.Server) gin.HandlerFunc {
