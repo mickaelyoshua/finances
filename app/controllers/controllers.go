@@ -64,59 +64,6 @@ func RegisterView(ctx *gin.Context) {
 	HandleRenderError(err)
 }
 
-func validateRegisterParams(server *models.Server, ctx *gin.Context, name, email, password, confirmPassword string) (map[string]string, error) {
-	errs := make(map[string]string, 4)
-
-	if len(name) == 0 {
-		errs["name"] = "Name is required"
-	} else if len(name) < 3 {
-		errs["name"] = "Name must be at least 3 characters long"
-	} else if len(name) > 50 {
-		errs["name"] = "Name must be at most 50 characters long"
-	}
-
-	if len(email) == 0 {
-		errs["email"] = "Email is required."
-	} else if !util.ValidEmail(email) {
-		errs["email"] = "Please provide a valid email address"
-	}
-
-	if len(password) == 0 {
-		errs["password"] = "Password is required"
-	} else if len(password) < 6 {
-		errs["password"] = "Password must be at least 6 characters long"
-	}
-
-	if len(confirmPassword) == 0 {
-		errs["confirmPassword"] = "Password confirmation is required"
-	} else if password != confirmPassword {
-		errs["confirmPassword"] = "Passwords do not match"
-	}
-
-	// If there are already validation errors, no need to check the database.
-	if len(errs) > 0 {
-		return errs, nil
-	}
-
-	// Now, check the database to see if the email is already taken.
-	_, err := server.Querier.SearchEmail(ctx, email)
-	if err == nil {
-		// We found an email, so it's already taken. This is a validation error.
-		errs["email"] = "Email already taken"
-		return errs, nil
-	}
-
-	if err != pgx.ErrNoRows {
-		// This is a genuine database error, not a "not found" error.
-		// We should not expose this to the user, but return it to the handler.
-		log.Printf("Database error while searching for email: %v", err)
-		return nil, err
-	}
-
-	// If we get here, it means err was pgx.ErrNoRows, which is the success case
-	// (email is not taken). We return the (empty) errs map and a nil error.
-	return errs, nil
-}
 func Register(server *models.Server) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		name := ctx.PostForm("name")
@@ -173,37 +120,6 @@ func LoginView(ctx *gin.Context) {
 	HandleRenderError(err)
 }
 
-func validateLoginParams(server *models.Server, ctx *gin.Context, email, password string) (map[string]string, error) {
-	errs := make(map[string]string, 3)
-
-	if len(email) == 0 {
-		errs["email"] = "Email is required"
-	} else if !util.ValidEmail(email) {
-		errs["email"] = "Please provide a valid email address"
-	}
-
-	if len(password) == 0 {
-		errs["password"] = "Password is required"
-	} else if len(password) < 6 {
-		errs["password"] = "Password must be at least 6 characters long"
-	}
-
-	// If there are already validation errors, no need to check the database.
-	if len(errs) > 0 {
-		return errs, nil
-	}
-
-	user, err := server.Querier.GetUserByEmail(ctx, email)
-	if err != nil {
-		return nil, err
-	}
-
-	if user.Email == "" || !util.PassEqual(user.PasswordHash, password) {
-		errs["login"] = "Email or password incorrect"
-	}
-
-	return errs, nil
-}
 func Login(server *models.Server) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		// Get form params
