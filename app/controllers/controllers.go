@@ -28,18 +28,18 @@ func Index(server *models.Server) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		idStr, err := ctx.Cookie("id")
 		if err != nil {
-			log.Printf("Error getting cookie: %v\n", err)
+			log.Printf("Error getting cookie: %v\n\n", err)
 			return
 		}
 		id, err := uuid.FromBytes([]byte(idStr))
 		if err != nil {
-			log.Printf("Error getting uuid from string: %v\n", err)
+			log.Printf("Error getting uuid from string: %v\n\n", err)
 			return
 		}
 
 		user, err := server.Querier.GetUserById(ctx, id)
 		if err != nil {
-			log.Printf("Error getting user: %v\n", err)
+			log.Printf("Error getting user: %v\n\n", err)
 			return
 		}
 

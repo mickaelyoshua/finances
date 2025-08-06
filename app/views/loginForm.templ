@@ -8,7 +8,7 @@ type LoginFormData struct {
 }
 
 templ LoginForm(data LoginFormData) {
-	<form hx-post="/login" hx-target="#main-content" hx-swap="innerHTML">
+	<form hx-post="/login" hx-target-4xx="this" hx-swap="innerHTML">
 		<div>
 			<label for="email">Your email</label>
 			<div class="field-container">
