@@ -37,13 +37,18 @@ fn render_tabs(frame: &mut Frame, area: Rect, current: Screen) {
 }
 
 fn render_content(frame: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(app.screen.label());
+    match app.screen {
+        Screen::Dashboard => super::screens::dashboard::render(frame, area, app),
+        _ => {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(app.screen.label());
+            let paragraph =
+                Paragraph::new(format!("{} - coming soon", app.screen.label())).block(block);
 
-    let paragraph = Paragraph::new(format!("{} = coming soon", app.screen.label())).block(block);
-
-    frame.render_widget(paragraph, area);
+            frame.render_widget(paragraph, area);
+        }
+    }
 }
 
 fn render_status_bar(frame: &mut Frame, area: Rect) {

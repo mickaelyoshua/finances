@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
+use chrono::{Datelike, Local};
 use crossterm::event::{KeyCode, KeyEvent};
 use rust_decimal::Decimal;
 use sqlx::PgPool;
 
-use crate::models::{Account, Category};
+use crate::models::{Account, Budget, Category, RecurringTransaction};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -62,6 +63,9 @@ pub struct App {
     pub accounts: Vec<Account>,
     pub categories: Vec<Category>,
     pub balances: HashMap<i32, (Decimal, Decimal)>, // account_id -> (cheking, credit_used)
+    pub budgets: Vec<Budget>,
+    pub budget_spent: HashMap<i32, Decimal>, // category_id -> spent this month
+    pub pending_recurring: Vec<RecurringTransaction>,
 }
 
 impl App {
@@ -73,11 +77,14 @@ impl App {
             accounts: Vec::new(),
             categories: Vec::new(),
             balances: HashMap::new(),
+            budgets: Vec::new(),
+            budget_spent: HashMap::new(),
+            pending_recurring: Vec::new(),
         }
     }
 
     pub async fn load_data(&mut self) -> anyhow::Result<()> {
-        use crate::db::{accounts, categories};
+        use crate::db::{accounts, budgets, categories, recurring, transactions};
 
         self.accounts = accounts::list_accounts(&self.pool).await?;
         self.categories = categories::list_categories(&self.pool).await?;
@@ -92,6 +99,24 @@ impl App {
             };
             self.balances.insert(acc.id, (checking, credit));
         }
+
+        self.budgets = budgets::list_budgets(&self.pool).await?;
+
+        self.budget_spent.clear();
+        let today = Local::now().date_naive();
+        let month_start = today.with_day(1).unwrap();
+        for b in &self.budgets {
+            let spent = transactions::sum_expenses_by_category(
+                &self.pool,
+                b.category_id,
+                month_start,
+                today,
+            )
+            .await?;
+            self.budget_spent.insert(b.category_id, spent);
+        }
+
+        self.pending_recurring = recurring::list_pending(&self.pool, today).await?;
 
         Ok(())
     }
