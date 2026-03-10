@@ -8,7 +8,10 @@ use sqlx::PgPool;
 
 use crate::{
     models::{Account, AccountType, Budget, Category, RecurringTransaction},
-    ui::screens::accounts::{AccountField, AccountForm, AccountFormMode},
+    ui::{
+        components::popup::ConfirmPopup,
+        screens::accounts::{AccountField, AccountForm, AccountFormMode},
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +82,8 @@ pub struct App {
     pub account_table_state: TableState,
     pub input_mode: InputMode,
     pub account_form: Option<AccountForm>,
+    pub confirm_popup: Option<ConfirmPopup>,
+    pub deactivate_account_id: Option<i32>,
 }
 
 impl App {
@@ -96,6 +101,8 @@ impl App {
             account_table_state: TableState::default().with_selected(0),
             input_mode: InputMode::Normal,
             account_form: None,
+            confirm_popup: None,
+            deactivate_account_id: None,
         }
     }
 
@@ -138,6 +145,18 @@ impl App {
     }
 
     pub async fn handle_key(&mut self, key: KeyEvent) -> anyhow::Result<()> {
+        // Popup takes priority over everything
+        if let Some(popup) = &mut self.confirm_popup {
+            if let Some(confirmed) = popup.handle_key(key.code) {
+                if confirmed {
+                    self.execute_deactivate().await?;
+                }
+                self.confirm_popup = None;
+                self.deactivate_account_id = None;
+            }
+            return Ok(());
+        }
+
         match self.input_mode {
             InputMode::Normal => self.handle_normal_key(key).await,
             InputMode::Editing => self.handle_editing_key(key).await,
@@ -183,6 +202,17 @@ impl App {
                     self.input_mode = InputMode::Editing;
                 }
             }
+            KeyCode::Char('d') if self.screen == Screen::Accounts => {
+                if let Some(acc) = self
+                    .account_table_state
+                    .selected()
+                    .and_then(|i| self.accounts.get(i))
+                {
+                    self.deactivate_account_id = Some(acc.id);
+                    self.confirm_popup =
+                        Some(ConfirmPopup::new(format!("Deactivate \"{}\"?", acc.name)));
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -221,7 +251,10 @@ impl App {
                         AccountField::DueDay => form.due_day.handle_key(key.code),
                         // Toggle fields
                         AccountField::AccountType => {
-                            if matches!(key.code, KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right) {
+                            if matches!(
+                                key.code,
+                                KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
+                            ) {
                                 form.account_type = match form.account_type {
                                     AccountType::Checking => AccountType::Cash,
                                     AccountType::Cash => AccountType::Checking,
@@ -237,14 +270,20 @@ impl App {
                             }
                         }
                         AccountField::HasCreditCard => {
-                            if matches!(key.code, KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right) {
+                            if matches!(
+                                key.code,
+                                KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
+                            ) {
                                 form.has_credit_card = !form.has_credit_card;
                                 let max = form.visible_fields().len() - 1;
                                 form.active_field = form.active_field.min(max);
                             }
                         }
                         AccountField::HasDebitCard => {
-                            if matches!(key.code, KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right) {
+                            if matches!(
+                                key.code,
+                                KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
+                            ) {
                                 form.has_debit_card = !form.has_debit_card;
                             }
                         }
@@ -284,7 +323,8 @@ impl App {
             match form.billing_day.value.trim().parse::<i16>() {
                 Ok(v) if (1..=28).contains(&v) => Some(v),
                 _ => {
-                    self.account_form.as_mut().unwrap().error = Some("Billing day must be 1-28".into());
+                    self.account_form.as_mut().unwrap().error =
+                        Some("Billing day must be 1-28".into());
                     return Ok(());
                 }
             }
@@ -306,16 +346,48 @@ impl App {
 
         match form.mode {
             AccountFormMode::Create => {
-                accounts::create_account(&self.pool, &name, form.account_type, form.has_credit_card, credit_limit, billing_day, due_day, form.has_debit_card).await?;
+                accounts::create_account(
+                    &self.pool,
+                    &name,
+                    form.account_type,
+                    form.has_credit_card,
+                    credit_limit,
+                    billing_day,
+                    due_day,
+                    form.has_debit_card,
+                )
+                .await?;
             }
             AccountFormMode::Edit(id) => {
-                accounts::update_account(&self.pool, id, &name, form.has_credit_card, credit_limit, billing_day, due_day, form.has_debit_card).await?;
+                accounts::update_account(
+                    &self.pool,
+                    id,
+                    &name,
+                    form.has_credit_card,
+                    credit_limit,
+                    billing_day,
+                    due_day,
+                    form.has_debit_card,
+                )
+                .await?;
             }
         }
 
         self.account_form = None;
         self.input_mode = InputMode::Normal;
         self.load_data().await?;
+        Ok(())
+    }
+
+    async fn execute_deactivate(&mut self) -> anyhow::Result<()> {
+        if let Some(id) = self.deactivate_account_id {
+            crate::db::accounts::deactivate_account(&self.pool, id).await?;
+            self.load_data().await?;
+            // Clamp selection if last account was removed
+            let max = self.accounts.len().saturating_sub(1);
+            let i = self.account_table_state.selected().unwrap_or(0);
+            self.account_table_state.select(Some(i.min(max)));
+        }
         Ok(())
     }
 }

@@ -6,9 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Tabs},
 };
 
-use crate::ui::app::InputMode;
-
-use super::app::{App, Screen};
+use super::app::{App, InputMode, Screen};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let [tab_area, content_area, status_area] = Layout::vertical([
@@ -21,6 +19,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     render_tabs(frame, tab_area, app.screen);
     render_content(frame, content_area, app);
     render_status_bar(frame, status_area, app);
+
+    // Popup overlay (renders on top of everything)
+    if let Some(popup) = &app.confirm_popup {
+        popup.render(frame, frame.area());
+    }
 }
 
 fn render_tabs(frame: &mut Frame, area: Rect, current: Screen) {
