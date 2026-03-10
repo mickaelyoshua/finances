@@ -1,0 +1,287 @@
+use ratatui::{
+    Frame,
+    layout::{Constraint, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph, Row, Table},
+};
+use rust_decimal::Decimal;
+
+use crate::{
+    models::{Account, AccountType},
+    ui::{App, components::input::InputField},
+};
+
+pub enum AccountFormMode {
+    Create,
+    Edit(i32),
+}
+
+pub struct AccountForm {
+    pub mode: AccountFormMode,
+    pub name: InputField,
+    pub account_type: AccountType,
+    pub has_credit_card: bool,
+    pub credit_limit: InputField,
+    pub billing_day: InputField,
+    pub due_day: InputField,
+    pub has_debit_card: bool,
+    pub active_field: usize,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountField {
+    Name,
+    AccountType,
+    HasCreditCard,
+    CreditLimit,
+    BillingDay,
+    DueDay,
+    HasDebitCard,
+}
+
+impl AccountForm {
+    pub fn new_create() -> Self {
+        Self {
+            mode: AccountFormMode::Create,
+            name: InputField::new("Name"),
+            account_type: AccountType::Checking,
+            has_credit_card: false,
+            credit_limit: InputField::new("Credit Limit"),
+            billing_day: InputField::new("Billing Day"),
+            due_day: InputField::new("Due Day"),
+            has_debit_card: false,
+            active_field: 0,
+            error: None,
+        }
+    }
+
+    pub fn new_edit(acc: &Account) -> Self {
+        Self {
+            mode: AccountFormMode::Edit(acc.id),
+            name: InputField::new("Name").with_value(&acc.name),
+            account_type: acc.parsed_type(),
+            has_credit_card: acc.has_credit_card,
+            credit_limit: InputField::new("Credit Limit")
+                .with_value(acc.credit_limit.map(|v| v.to_string()).unwrap_or_default()),
+            billing_day: InputField::new("Billing Day")
+                .with_value(acc.billing_day.map(|v| v.to_string()).unwrap_or_default()),
+            due_day: InputField::new("Due Day")
+                .with_value(acc.due_day.map(|v| v.to_string()).unwrap_or_default()),
+            has_debit_card: acc.has_debit_card,
+            active_field: 0,
+            error: None,
+        }
+    }
+
+    pub fn visible_fields(&self) -> Vec<AccountField> {
+        let mut fields = vec![AccountField::Name, AccountField::AccountType];
+
+        if self.account_type == AccountType::Checking {
+            fields.push(AccountField::HasCreditCard);
+            if self.has_credit_card {
+                fields.push(AccountField::CreditLimit);
+                fields.push(AccountField::BillingDay);
+                fields.push(AccountField::DueDay);
+            }
+            fields.push(AccountField::HasDebitCard);
+        }
+        fields
+    }
+
+    pub fn active_field_id(&self) -> AccountField {
+        let visible = self.visible_fields();
+        visible[self.active_field.min(visible.len() - 1)]
+    }
+}
+
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
+    if app.account_form.is_some() {
+        render_form(frame, area, app);
+    } else {
+        render_list(frame, area, app);
+    }
+}
+
+fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
+    let header = Row::new([
+        "Account",
+        "Type",
+        "Credit Card",
+        "Debit",
+        "Checking",
+        "Credit Used",
+    ])
+    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+
+    let [table_area, detail_area] =
+        Layout::vertical([Constraint::Min(5), Constraint::Length(6)]).areas(area);
+
+    let rows: Vec<Row> = app
+        .accounts
+        .iter()
+        .map(|acc| {
+            let (checking, credit) = app.balances.get(&acc.id).copied().unwrap_or_default();
+            let credit_cell = if acc.has_credit_card {
+                let limit = acc.credit_limit.unwrap_or(Decimal::ZERO);
+                format!("R$ {:.2} / R$ {:.2}", credit, limit)
+            } else {
+                "-".to_string()
+            };
+            Row::new([
+                acc.name.clone(),
+                acc.parsed_type().label().to_string(),
+                if acc.has_credit_card { "Yes" } else { "No" }.to_string(),
+                if acc.has_debit_card { "Yes" } else { "No" }.to_string(),
+                format!("R$ {:.2}", checking),
+                credit_cell,
+            ])
+        })
+        .collect();
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Min(12),
+            Constraint::Length(10),
+            Constraint::Length(12),
+            Constraint::Length(6),
+            Constraint::Length(14),
+            Constraint::Min(20),
+        ],
+    )
+    .header(header)
+    .block(Block::default().borders(Borders::ALL).title("Accounts"))
+    .row_highlight_style(
+        Style::new()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    );
+
+    frame.render_stateful_widget(table, table_area, &mut app.account_table_state);
+
+    let detail_content = match app
+        .account_table_state
+        .selected()
+        .and_then(|i| app.accounts.get(i))
+    {
+        Some(acc) => {
+            let methods: Vec<&str> = acc
+                .allowed_payment_methods()
+                .iter()
+                .map(|m| m.label())
+                .collect();
+
+            let billing = if acc.has_credit_card {
+                format!(
+                    "Billing day: {} | Due day: {}",
+                    acc.billing_day.unwrap_or(0),
+                    acc.due_day.unwrap_or(0),
+                )
+            } else {
+                "No credit card".to_string()
+            };
+
+            vec![
+                Line::from(format!(
+                    " Name: {} | Type: {}",
+                    acc.name,
+                    acc.parsed_type().label()
+                )),
+                Line::from(format!(" {}", billing)),
+                Line::from(format!(" Payment methods: {}", methods.join(", "))),
+                Line::from(format!(" Created: {}", acc.created_at.format("%d-%m-%Y"))),
+            ]
+        }
+        None => vec![Line::from(" No account selected.")],
+    };
+
+    let detail_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Account Details");
+    let detail = Paragraph::new(detail_content).block(detail_block);
+
+    frame.render_widget(detail, detail_area);
+}
+
+fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
+    let form = app.account_form.as_ref().unwrap();
+    let visible = form.visible_fields();
+
+    let title = match form.mode {
+        AccountFormMode::Create => "New Account",
+        AccountFormMode::Edit(_) => "Edit Account",
+    };
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, field) in visible.iter().enumerate() {
+        let active = i == form.active_field;
+        let line = match field {
+            AccountField::Name => form.name.render_line(active),
+            AccountField::CreditLimit => form.credit_limit.render_line(active),
+            AccountField::BillingDay => form.billing_day.render_line(active),
+            AccountField::DueDay => form.due_day.render_line(active),
+            AccountField::AccountType => render_toggle(
+                "Type",
+                &["Checking", "Cash"],
+                if form.account_type == AccountType::Checking {
+                    0
+                } else {
+                    1
+                },
+                active,
+            ),
+            AccountField::HasCreditCard => render_toggle(
+                "Credit Card",
+                &["No", "Yes"],
+                if form.has_credit_card { 1 } else { 0 },
+                active,
+            ),
+            AccountField::HasDebitCard => render_toggle(
+                "Debit Card",
+                &["No", "Yes"],
+                if form.has_debit_card { 1 } else { 0 },
+                active,
+            ),
+        };
+        lines.push(line);
+    }
+
+    // Error message
+    if let Some(err) = &form.error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("Error: {}", err),
+            Style::new().fg(Color::Red),
+        )));
+    }
+
+    let block = Block::default().borders(Borders::ALL).title(title);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_toggle<'a>(label: &str, options: &[&'a str], selected: usize, active: bool) -> Line<'a> {
+    let label_style = if active {
+        Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(Color::DarkGray)
+    };
+
+    let mut spans = vec![Span::styled(format!(" {}: ", label), label_style)];
+
+    for (i, option) in options.iter().enumerate() {
+        let style = if i == selected {
+            Style::new().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::new().fg(Color::DarkGray)
+        };
+        spans.push(Span::styled(format!(" {} ", option), style));
+        if i < options.len() - 1 {
+            spans.push(Span::raw(" "));
+        }
+    }
+
+    Line::from(spans)
+}
