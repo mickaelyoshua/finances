@@ -73,7 +73,11 @@ cargo run
 
 | Key | Action |
 |-----|--------|
-| `Tab` / `Shift+Tab` | Switch screens |
+| `1`–`7` / `← →` | Switch screens |
+| `↑ ↓` | Navigate lists |
+| `n` | New item |
+| `e` | Edit selected |
+| `d` | Delete/deactivate selected |
 | `q` | Quit |
 
 ### CLI Flags
@@ -92,9 +96,10 @@ src/
 ├── models/              # Domain types (Account, Transaction, Budget, ...)
 ├── db/                  # Database operations (one module per table)
 └── ui/                  # TUI layer
-    ├── app.rs           # App state
+    ├── app.rs           # App state, key handling, confirm actions
     ├── event.rs         # Keyboard/tick event handler
     ├── render.rs        # Screen rendering
+    ├── components/      # Reusable widgets (input, popup, toggle, format)
     └── screens/         # Per-screen UI logic
 migrations/
     └── 20260305_initial.sql
