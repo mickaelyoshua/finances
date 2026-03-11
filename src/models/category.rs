@@ -16,6 +16,13 @@ impl CategoryType {
             Self::Income => "income",
         }
     }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Expense => "Expense",
+            Self::Income => "Income",
+        }
+    }
 }
 
 impl fmt::Display for CategoryType {
