@@ -5,12 +5,12 @@ use tokio::{sync::mpsc, task::spawn_blocking};
 
 pub enum AppEvent {
     Key(KeyEvent),
-    Tick, // periodic tick for animations/refreshes
+    Resize(u16, u16),
+    Tick,
 }
 
 pub struct EventHandler {
     rx: mpsc::UnboundedReceiver<AppEvent>,
-    // the background task handle, to abort on exit
     _task: tokio::task::JoinHandle<()>,
 }
 
@@ -20,14 +20,21 @@ impl EventHandler {
         let _task = {
             spawn_blocking(move || {
                 loop {
-                    if poll(tick_rate).expect("failed to poll events") {
-                        if let Event::Key(key) = event::read().expect("failed to read event")
-                            && key.kind == KeyEventKind::Press
-                            && tx.send(AppEvent::Key(key)).is_err()
-                        {
-                            break;
-                        }
-                    } else if tx.send(AppEvent::Tick).is_err() {
+                    let ok = match poll(tick_rate) {
+                        Ok(true) => match event::read() {
+                            Ok(Event::Key(key)) if key.kind == KeyEventKind::Press => {
+                                tx.send(AppEvent::Key(key)).is_ok()
+                            }
+                            Ok(Event::Resize(w, h)) => {
+                                tx.send(AppEvent::Resize(w, h)).is_ok()
+                            }
+                            Ok(_) => true, // ignore mouse, focus, paste events
+                            Err(_) => false,
+                        },
+                        Ok(false) => tx.send(AppEvent::Tick).is_ok(),
+                        Err(_) => false,
+                    };
+                    if !ok {
                         break;
                     }
                 }
