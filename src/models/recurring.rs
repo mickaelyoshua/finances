@@ -60,8 +60,6 @@ pub struct RecurringTransaction {
 
 impl RecurringTransaction {
     pub fn parsed_frequency(&self) -> Frequency {
-        self.frequency
-            .parse()
-            .expect("invalid frequency in database")
+        self.frequency.parse().unwrap_or(Frequency::Monthly)
     }
 }

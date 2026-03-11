@@ -53,8 +53,6 @@ pub struct Category {
 
 impl Category {
     pub fn parsed_type(&self) -> CategoryType {
-        self.category_type
-            .parse()
-            .expect("invalid category_type in database")
+        self.category_type.parse().unwrap_or(CategoryType::Expense)
     }
 }

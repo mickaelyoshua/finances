@@ -59,6 +59,15 @@ fn render_content(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
+    if let Some(err) = &app.status_error {
+        let line = Line::from(Span::styled(
+            format!(" {err}"),
+            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ));
+        frame.render_widget(Paragraph::new(line), area);
+        return;
+    }
+
     let hints = match app.input_mode {
         InputMode::Editing => Line::from(vec![
             Span::styled(" Esc", Style::new().fg(Color::Yellow)),

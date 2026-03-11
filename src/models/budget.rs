@@ -1,6 +1,6 @@
 use std::fmt;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, TimeDelta, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
 
@@ -49,8 +49,29 @@ pub struct Budget {
     pub created_at: DateTime<Utc>,
 }
 
+impl BudgetPeriod {
+    /// Returns the (start, end) date range for this budget period containing `today`.
+    pub fn date_range(self, today: NaiveDate) -> (NaiveDate, NaiveDate) {
+        match self {
+            Self::Weekly => {
+                let days_since_monday = today.weekday().num_days_from_monday();
+                let start = today - TimeDelta::days(days_since_monday as i64);
+                (start, today)
+            }
+            Self::Monthly => {
+                let start = today.with_day(1).unwrap();
+                (start, today)
+            }
+            Self::Yearly => {
+                let start = NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap();
+                (start, today)
+            }
+        }
+    }
+}
+
 impl Budget {
     pub fn parsed_period(&self) -> BudgetPeriod {
-        self.period.parse().expect("invalid period in database")
+        self.period.parse().unwrap_or(BudgetPeriod::Monthly)
     }
 }

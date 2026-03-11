@@ -54,3 +54,19 @@ pub async fn delete_category(pool: &PgPool, id: i32) -> Result<(), sqlx::Error> 
         .await?;
     Ok(())
 }
+
+/// Check if a category is referenced by any transactions, budgets,
+/// installment purchases, or recurring transactions.
+pub async fn has_references(pool: &PgPool, id: i32) -> Result<bool, sqlx::Error> {
+    let row: (bool,) = sqlx::query_as(
+        "SELECT
+            EXISTS(SELECT 1 FROM transactions WHERE category_id = $1)
+            OR EXISTS(SELECT 1 FROM budgets WHERE category_id = $1)
+            OR EXISTS(SELECT 1 FROM installment_purchases WHERE category_id = $1)
+            OR EXISTS(SELECT 1 FROM recurring_transactions WHERE category_id = $1)",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}

@@ -67,9 +67,7 @@ pub struct Account {
 
 impl Account {
     pub fn parsed_type(&self) -> AccountType {
-        self.account_type
-            .parse()
-            .expect("invalid account_type in database")
+        self.account_type.parse().unwrap_or(AccountType::Checking)
     }
 
     /// Returns all payment methods this account supports based on its type and capabilities.

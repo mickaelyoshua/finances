@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rust_decimal::Decimal;
 use sqlx::PgPool;
 
@@ -46,6 +48,7 @@ pub async fn update_account(
     pool: &PgPool,
     id: i32,
     name: &str,
+    account_type: AccountType,
     has_credit_card: bool,
     credit_limit: Option<Decimal>,
     billing_day: Option<i16>,
@@ -54,12 +57,14 @@ pub async fn update_account(
 ) -> Result<Account, sqlx::Error> {
     sqlx::query_as::<_, Account>(
         "UPDATE accounts
-         SET name = $2, has_credit_card = $3, credit_limit = $4, billing_day = $5, due_day = $6, has_debit_card = $7
+         SET name = $2, account_type = $3, has_credit_card = $4, credit_limit = $5,
+             billing_day = $6, due_day = $7, has_debit_card = $8
          WHERE id = $1
          RETURNING *",
     )
     .bind(id)
     .bind(name)
+    .bind(account_type.as_str())
     .bind(has_credit_card)
     .bind(credit_limit)
     .bind(billing_day)
@@ -108,4 +113,30 @@ pub async fn compute_credit_used(pool: &PgPool, account_id: i32) -> Result<Decim
     .fetch_one(pool)
     .await?;
     Ok(row.0)
+}
+
+/// Compute checking balance and credit used for all active accounts in a single query.
+pub async fn compute_all_balances(
+    pool: &PgPool,
+) -> Result<HashMap<i32, (Decimal, Decimal)>, sqlx::Error> {
+    let rows: Vec<(i32, Decimal, Decimal)> = sqlx::query_as(
+        "SELECT
+            a.id,
+            COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND transaction_type = 'income'), 0)
+            - COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND transaction_type = 'expense' AND payment_method != 'credit'), 0)
+            + COALESCE((SELECT SUM(amount) FROM transfers WHERE to_account_id = a.id), 0)
+            - COALESCE((SELECT SUM(amount) FROM transfers WHERE from_account_id = a.id), 0)
+            - COALESCE((SELECT SUM(amount) FROM credit_card_payments WHERE account_id = a.id), 0),
+            CASE WHEN a.has_credit_card THEN
+                COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND payment_method = 'credit'), 0)
+                - COALESCE((SELECT SUM(amount) FROM credit_card_payments WHERE account_id = a.id), 0)
+            ELSE 0
+            END
+        FROM accounts a
+        WHERE a.active = TRUE
+        ORDER BY a.id",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|(id, c, u)| (id, (c, u))).collect())
 }

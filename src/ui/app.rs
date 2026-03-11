@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{Datelike, Local};
+use chrono::Local;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::TableState;
 use rust_decimal::Decimal;
@@ -72,24 +72,29 @@ pub enum InputMode {
     Editing,
 }
 
+pub enum ConfirmAction {
+    DeactivateAccount(i32),
+    DeleteCategory(i32),
+}
+
 pub struct App {
     pub running: bool,
     pub screen: Screen,
     pub pool: PgPool,
     pub accounts: Vec<Account>,
     pub categories: Vec<Category>,
-    pub balances: HashMap<i32, (Decimal, Decimal)>, // account_id -> (cheking, credit_used)
+    pub balances: HashMap<i32, (Decimal, Decimal)>, // account_id -> (checking, credit_used)
     pub budgets: Vec<Budget>,
-    pub budget_spent: HashMap<i32, Decimal>, // category_id -> spent this month
+    pub budget_spent: HashMap<i32, Decimal>, // budget_id -> spent in current period
     pub pending_recurring: Vec<RecurringTransaction>,
     pub account_table_state: TableState,
     pub input_mode: InputMode,
     pub account_form: Option<AccountForm>,
     pub confirm_popup: Option<ConfirmPopup>,
-    pub deactivate_account_id: Option<i32>,
+    pub confirm_action: Option<ConfirmAction>,
     pub category_table_state: TableState,
     pub category_form: Option<CategoryForm>,
-    pub deleted_category_id: Option<i32>,
+    pub status_error: Option<String>,
 }
 
 impl App {
@@ -108,10 +113,10 @@ impl App {
             input_mode: InputMode::Normal,
             account_form: None,
             confirm_popup: None,
-            deactivate_account_id: None,
+            confirm_action: None,
             category_table_state: TableState::default().with_selected(0),
             category_form: None,
-            deleted_category_id: None,
+            status_error: None,
         }
     }
 
@@ -120,32 +125,18 @@ impl App {
 
         self.accounts = accounts::list_accounts(&self.pool).await?;
         self.categories = categories::list_categories(&self.pool).await?;
-
-        self.balances.clear();
-        for acc in &self.accounts {
-            let checking = accounts::compute_balance(&self.pool, acc.id).await?;
-            let credit = if acc.has_credit_card {
-                accounts::compute_credit_used(&self.pool, acc.id).await?
-            } else {
-                Decimal::ZERO
-            };
-            self.balances.insert(acc.id, (checking, credit));
-        }
+        self.balances = accounts::compute_all_balances(&self.pool).await?;
 
         self.budgets = budgets::list_budgets(&self.pool).await?;
 
         self.budget_spent.clear();
         let today = Local::now().date_naive();
-        let month_start = today.with_day(1).unwrap();
         for b in &self.budgets {
-            let spent = transactions::sum_expenses_by_category(
-                &self.pool,
-                b.category_id,
-                month_start,
-                today,
-            )
-            .await?;
-            self.budget_spent.insert(b.category_id, spent);
+            let (from, to) = b.parsed_period().date_range(today);
+            let spent =
+                transactions::sum_expenses_by_category(&self.pool, b.category_id, from, to)
+                    .await?;
+            self.budget_spent.insert(b.id, spent);
         }
 
         self.pending_recurring = recurring::list_pending(&self.pool, today).await?;
@@ -154,19 +145,25 @@ impl App {
     }
 
     pub async fn handle_key(&mut self, key: KeyEvent) -> anyhow::Result<()> {
+        // Clear status error on any key press
+        self.status_error = None;
+
         // Popup takes priority over everything
         if let Some(popup) = &mut self.confirm_popup {
             if let Some(confirmed) = popup.handle_key(key.code) {
                 if confirmed {
-                    if self.deactivate_account_id.is_some() {
-                        self.execute_deactivate().await?;
-                    } else if self.deleted_category_id.is_some() {
-                        self.execute_delete_category().await?;
+                    match self.confirm_action.take() {
+                        Some(ConfirmAction::DeactivateAccount(id)) => {
+                            self.execute_deactivate(id).await?;
+                        }
+                        Some(ConfirmAction::DeleteCategory(id)) => {
+                            self.execute_delete_category(id).await?;
+                        }
+                        None => {}
                     }
                 }
                 self.confirm_popup = None;
-                self.deactivate_account_id = None;
-                self.deleted_category_id = None;
+                self.confirm_action = None;
             }
             return Ok(());
         }
@@ -186,32 +183,24 @@ impl App {
             }
             KeyCode::Left => self.screen = self.screen.prev(),
             KeyCode::Right => self.screen = self.screen.next(),
-            KeyCode::Up => {
-                if self.screen == Screen::Accounts {
-                    let i = self.account_table_state.selected().unwrap_or(0);
-                    if i > 0 {
-                        self.account_table_state.select(Some(i - 1));
-                    }
-                } else if self.screen == Screen::Categories {
-                    let i = self.category_table_state.selected().unwrap_or(0);
-                    if i > 0 {
-                        self.category_table_state.select(Some(i - 1));
-                    }
+            KeyCode::Up => match self.screen {
+                Screen::Accounts => {
+                    move_table_selection(&mut self.account_table_state, self.accounts.len(), -1);
                 }
-            }
-            KeyCode::Down => {
-                if self.screen == Screen::Accounts {
-                    let i = self.account_table_state.selected().unwrap_or(0);
-                    if i + 1 < self.accounts.len() {
-                        self.account_table_state.select(Some(i + 1));
-                    }
-                } else if self.screen == Screen::Categories {
-                    let i = self.category_table_state.selected().unwrap_or(0);
-                    if i + 1 < self.categories.len() {
-                        self.category_table_state.select(Some(i + 1));
-                    }
+                Screen::Categories => {
+                    move_table_selection(&mut self.category_table_state, self.categories.len(), -1);
                 }
-            }
+                _ => {}
+            },
+            KeyCode::Down => match self.screen {
+                Screen::Accounts => {
+                    move_table_selection(&mut self.account_table_state, self.accounts.len(), 1);
+                }
+                Screen::Categories => {
+                    move_table_selection(&mut self.category_table_state, self.categories.len(), 1);
+                }
+                _ => {}
+            },
             KeyCode::Char('n') if self.screen == Screen::Accounts => {
                 self.account_form = Some(AccountForm::new_create());
                 self.input_mode = InputMode::Editing;
@@ -232,7 +221,7 @@ impl App {
                     .selected()
                     .and_then(|i| self.accounts.get(i))
                 {
-                    self.deactivate_account_id = Some(acc.id);
+                    self.confirm_action = Some(ConfirmAction::DeactivateAccount(acc.id));
                     self.confirm_popup =
                         Some(ConfirmPopup::new(format!("Deactivate \"{}\"?", acc.name)));
                 }
@@ -257,9 +246,16 @@ impl App {
                     .selected()
                     .and_then(|i| self.categories.get(i))
                 {
-                    self.deleted_category_id = Some(cat.id);
-                    self.confirm_popup =
-                        Some(ConfirmPopup::new(format!("Delete \"{}\"?", cat.name)));
+                    let cat_id = cat.id;
+                    let cat_name = cat.name.clone();
+                    if crate::db::categories::has_references(&self.pool, cat_id).await? {
+                        self.status_error =
+                            Some(format!("Cannot delete \"{cat_name}\": category is in use"));
+                    } else {
+                        self.confirm_action = Some(ConfirmAction::DeleteCategory(cat_id));
+                        self.confirm_popup =
+                            Some(ConfirmPopup::new(format!("Delete \"{cat_name}\"?")));
+                    }
                 }
             }
             _ => {}
@@ -305,48 +301,35 @@ impl App {
                         AccountField::DueDay => form.due_day.handle_key(key.code),
                         // Toggle fields
                         AccountField::AccountType => {
-                            if matches!(
-                                key.code,
-                                KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
-                            ) {
+                            if is_toggle_key(key.code) {
                                 form.account_type = match form.account_type {
                                     AccountType::Checking => AccountType::Cash,
                                     AccountType::Cash => AccountType::Checking,
                                 };
-                                // Reset card flags when switching to Cash
                                 if form.account_type == AccountType::Cash {
                                     form.has_credit_card = false;
                                     form.has_debit_card = false;
                                 }
-                                // Clamp active_field if fields became hidden
                                 let max = form.visible_fields().len() - 1;
                                 form.active_field = form.active_field.min(max);
                             }
                         }
                         AccountField::HasCreditCard => {
-                            if matches!(
-                                key.code,
-                                KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
-                            ) {
+                            if is_toggle_key(key.code) {
                                 form.has_credit_card = !form.has_credit_card;
                                 let max = form.visible_fields().len() - 1;
                                 form.active_field = form.active_field.min(max);
                             }
                         }
                         AccountField::HasDebitCard => {
-                            if matches!(
-                                key.code,
-                                KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
-                            ) {
+                            if is_toggle_key(key.code) {
                                 form.has_debit_card = !form.has_debit_card;
                             }
                         }
                     }
                 }
             }
-        }
-
-        if let Some(form) = &mut self.category_form {
+        } else if let Some(form) = &mut self.category_form {
             match key.code {
                 KeyCode::Tab | KeyCode::Down => {
                     if form.active_field < CategoryField::ALL.len() - 1 {
@@ -361,10 +344,7 @@ impl App {
                 _ => match form.active_field_id() {
                     CategoryField::Name => form.name.handle_key(key.code),
                     CategoryField::CategoryType => {
-                        if matches!(
-                            key.code,
-                            KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
-                        ) {
+                        if is_toggle_key(key.code) {
                             form.category_type = match form.category_type {
                                 CategoryType::Expense => CategoryType::Income,
                                 CategoryType::Income => CategoryType::Expense,
@@ -383,7 +363,7 @@ impl App {
 
         let form = self.account_form.as_ref().unwrap();
 
-        // Validade
+        // Validate
         let name = form.name.value.trim().to_string();
         if name.is_empty() {
             self.account_form.as_mut().unwrap().error = Some("Name is required".into());
@@ -392,9 +372,15 @@ impl App {
 
         let credit_limit = if form.has_credit_card {
             match form.credit_limit.value.trim().parse::<Decimal>() {
-                Ok(v) => Some(v),
+                Ok(v) if v > Decimal::ZERO => Some(v),
+                Ok(_) => {
+                    self.account_form.as_mut().unwrap().error =
+                        Some("Credit limit must be positive".into());
+                    return Ok(());
+                }
                 Err(_) => {
-                    self.account_form.as_mut().unwrap().error = Some("Invalid credit limit".into());
+                    self.account_form.as_mut().unwrap().error =
+                        Some("Invalid credit limit".into());
                     return Ok(());
                 }
             }
@@ -419,7 +405,8 @@ impl App {
             match form.due_day.value.trim().parse::<i16>() {
                 Ok(v) if (1..=28).contains(&v) => Some(v),
                 _ => {
-                    self.account_form.as_mut().unwrap().error = Some("Due day must be 1-28".into());
+                    self.account_form.as_mut().unwrap().error =
+                        Some("Due day must be 1-28".into());
                     return Ok(());
                 }
             }
@@ -446,6 +433,7 @@ impl App {
                     &self.pool,
                     id,
                     &name,
+                    form.account_type,
                     form.has_credit_card,
                     credit_limit,
                     billing_day,
@@ -462,15 +450,10 @@ impl App {
         Ok(())
     }
 
-    async fn execute_deactivate(&mut self) -> anyhow::Result<()> {
-        if let Some(id) = self.deactivate_account_id {
-            crate::db::accounts::deactivate_account(&self.pool, id).await?;
-            self.load_data().await?;
-            // Clamp selection if last account was removed
-            let max = self.accounts.len().saturating_sub(1);
-            let i = self.account_table_state.selected().unwrap_or(0);
-            self.account_table_state.select(Some(i.min(max)));
-        }
+    async fn execute_deactivate(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::accounts::deactivate_account(&self.pool, id).await?;
+        self.load_data().await?;
+        clamp_selection(&mut self.account_table_state, self.accounts.len());
         Ok(())
     }
 
@@ -500,14 +483,26 @@ impl App {
         Ok(())
     }
 
-    async fn execute_delete_category(&mut self) -> anyhow::Result<()> {
-        if let Some(id) = self.deleted_category_id {
-            crate::db::categories::delete_category(&self.pool, id).await?;
-            self.load_data().await?;
-            let max = self.categories.len().saturating_sub(1);
-            let i = self.category_table_state.selected().unwrap_or(0);
-            self.category_table_state.select(Some(i.min(max)));
-        }
+    async fn execute_delete_category(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::categories::delete_category(&self.pool, id).await?;
+        self.load_data().await?;
+        clamp_selection(&mut self.category_table_state, self.categories.len());
         Ok(())
     }
+}
+
+fn move_table_selection(state: &mut TableState, len: usize, delta: isize) {
+    let i = state.selected().unwrap_or(0);
+    let new = (i as isize + delta).clamp(0, len.saturating_sub(1) as isize) as usize;
+    state.select(Some(new));
+}
+
+fn clamp_selection(state: &mut TableState, len: usize) {
+    let max = len.saturating_sub(1);
+    let i = state.selected().unwrap_or(0);
+    state.select(Some(i.min(max)));
+}
+
+fn is_toggle_key(code: KeyCode) -> bool {
+    matches!(code, KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right)
 }

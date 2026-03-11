@@ -5,8 +5,8 @@ CREATE TABLE accounts (
         CHECK (account_type IN ('checking', 'cash')),
     has_credit_card BOOLEAN NOT NULL DEFAULT FALSE,
     credit_limit NUMERIC(12, 2),
-    billing_day SMALLINT CHECK (billing_day BETWEEN 1 AND 31),
-    due_day SMALLINT CHECK (due_day BETWEEN 1 AND 31),
+    billing_day SMALLINT CHECK (billing_day BETWEEN 1 AND 28),
+    due_day SMALLINT CHECK (due_day BETWEEN 1 AND 28),
     has_debit_card BOOLEAN NOT NULL DEFAULT FALSE,
     active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
