@@ -8,7 +8,10 @@ use ratatui::{
 
 use crate::{
     models::CategoryType,
-    ui::{App, components::input::InputField},
+    ui::{
+        App,
+        components::{input::InputField, toggle::render_toggle},
+    },
 };
 
 pub enum CategoryFormMode {
@@ -170,28 +173,4 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let block = Block::default().borders(Borders::ALL).title(title);
     frame.render_widget(Paragraph::new(lines).block(block), area);
-}
-
-fn render_toggle<'a>(label: &str, options: &[&'a str], selected: usize, active: bool) -> Line<'a> {
-    let label_style = if active {
-        Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-    } else {
-        Style::new().fg(Color::DarkGray)
-    };
-
-    let mut spans = vec![Span::styled(format!(" {}: ", label), label_style)];
-
-    for (i, option) in options.iter().enumerate() {
-        let style = if i == selected {
-            Style::new().fg(Color::Black).bg(Color::Cyan)
-        } else {
-            Style::new().fg(Color::DarkGray)
-        };
-        spans.push(Span::styled(format!(" {} ", option), style));
-        if i < options.len() - 1 {
-            spans.push(Span::raw(" "));
-        }
-    }
-
-    Line::from(spans)
 }

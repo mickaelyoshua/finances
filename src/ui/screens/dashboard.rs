@@ -7,7 +7,7 @@ use ratatui::{
 };
 use rust_decimal::Decimal;
 
-use crate::ui::App;
+use crate::ui::{App, components::format::format_brl};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // Top half: accounts table, bottom half: budgets (left) + recurring (right)
@@ -19,10 +19,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     render_balances(frame, top, app);
     render_budgets(frame, budget_area, app);
     render_recurring(frame, recurring_area, app);
-}
-
-fn format_brl(value: Decimal) -> String {
-    format!("R$ {:.2}", value)
 }
 
 fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
@@ -82,7 +78,7 @@ fn render_budgets(frame: &mut Frame, area: Rect, app: &App) {
 
             let spent = app
                 .budget_spent
-                .get(&b.category_id)
+                .get(&b.id)
                 .copied()
                 .unwrap_or(Decimal::ZERO);
             let ratio = if b.amount > Decimal::ZERO {

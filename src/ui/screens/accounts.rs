@@ -9,7 +9,10 @@ use rust_decimal::Decimal;
 
 use crate::{
     models::{Account, AccountType},
-    ui::{App, components::input::InputField},
+    ui::{
+        App,
+        components::{format::format_brl, input::InputField, toggle::render_toggle},
+    },
 };
 
 pub enum AccountFormMode {
@@ -125,7 +128,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             let (checking, credit) = app.balances.get(&acc.id).copied().unwrap_or_default();
             let credit_cell = if acc.has_credit_card {
                 let limit = acc.credit_limit.unwrap_or(Decimal::ZERO);
-                format!("R$ {:.2} / R$ {:.2}", credit, limit)
+                format!("{} / {}", format_brl(credit), format_brl(limit))
             } else {
                 "-".to_string()
             };
@@ -134,7 +137,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 acc.parsed_type().label().to_string(),
                 if acc.has_credit_card { "Yes" } else { "No" }.to_string(),
                 if acc.has_debit_card { "Yes" } else { "No" }.to_string(),
-                format!("R$ {:.2}", checking),
+                format_brl(checking),
                 credit_cell,
             ])
         })
@@ -260,28 +263,4 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let block = Block::default().borders(Borders::ALL).title(title);
     frame.render_widget(Paragraph::new(lines).block(block), area);
-}
-
-fn render_toggle<'a>(label: &str, options: &[&'a str], selected: usize, active: bool) -> Line<'a> {
-    let label_style = if active {
-        Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-    } else {
-        Style::new().fg(Color::DarkGray)
-    };
-
-    let mut spans = vec![Span::styled(format!(" {}: ", label), label_style)];
-
-    for (i, option) in options.iter().enumerate() {
-        let style = if i == selected {
-            Style::new().fg(Color::Black).bg(Color::Cyan)
-        } else {
-            Style::new().fg(Color::DarkGray)
-        };
-        spans.push(Span::styled(format!(" {} ", option), style));
-        if i < options.len() - 1 {
-            spans.push(Span::raw(" "));
-        }
-    }
-
-    Line::from(spans)
 }
