@@ -46,6 +46,7 @@ fn render_content(frame: &mut Frame, area: Rect, app: &mut App) {
         Screen::Dashboard => super::screens::dashboard::render(frame, area, app),
         Screen::Accounts => super::screens::accounts::render(frame, area, app),
         Screen::Categories => super::screens::categories::render(frame, area, app),
+        Screen::Transactions => super::screens::transactions::render(frame, area, app),
         _ => {
             let block = Block::default()
                 .borders(Borders::ALL)

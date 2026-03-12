@@ -7,12 +7,16 @@ use rust_decimal::Decimal;
 use sqlx::PgPool;
 
 use crate::{
-    models::{Account, AccountType, Budget, Category, CategoryType, RecurringTransaction},
+    models::{
+        Account, AccountType, Budget, Category, CategoryType, RecurringTransaction, Transaction,
+        TransactionType,
+    },
     ui::{
         components::popup::ConfirmPopup,
         screens::{
             accounts::{AccountField, AccountForm, AccountFormMode},
             categories::{CategoryField, CategoryForm, CategoryFormMode},
+            transactions::{TransactionField, TransactionForm, TransactionFormMode},
         },
     },
 };
@@ -75,6 +79,7 @@ pub enum InputMode {
 pub enum ConfirmAction {
     DeactivateAccount(i32),
     DeleteCategory(i32),
+    DeleteTransaction(i32),
 }
 
 pub struct App {
@@ -94,6 +99,9 @@ pub struct App {
     pub confirm_action: Option<ConfirmAction>,
     pub category_table_state: TableState,
     pub category_form: Option<CategoryForm>,
+    pub transactions: Vec<Transaction>,
+    pub transaction_table_state: TableState,
+    pub transaction_form: Option<TransactionForm>,
     pub status_error: Option<String>,
 }
 
@@ -116,6 +124,9 @@ impl App {
             confirm_action: None,
             category_table_state: TableState::default().with_selected(0),
             category_form: None,
+            transactions: Vec::new(),
+            transaction_table_state: TableState::default().with_selected(0),
+            transaction_form: None,
             status_error: None,
         }
     }
@@ -134,12 +145,12 @@ impl App {
         for b in &self.budgets {
             let (from, to) = b.parsed_period().date_range(today);
             let spent =
-                transactions::sum_expenses_by_category(&self.pool, b.category_id, from, to)
-                    .await?;
+                transactions::sum_expenses_by_category(&self.pool, b.category_id, from, to).await?;
             self.budget_spent.insert(b.id, spent);
         }
 
         self.pending_recurring = recurring::list_pending(&self.pool, today).await?;
+        self.transactions = transactions::list_transactions(&self.pool, 100, 0).await?;
 
         Ok(())
     }
@@ -159,6 +170,9 @@ impl App {
                         Some(ConfirmAction::DeleteCategory(id)) => {
                             self.execute_delete_category(id).await?;
                         }
+                        Some(ConfirmAction::DeleteTransaction(id)) => {
+                            self.execute_delete_transaction(id).await?;
+                        }
                         None => {}
                     }
                 }
@@ -174,6 +188,8 @@ impl App {
         }
     }
 
+    // ── Normal-mode dispatch ──────────────────────────────────────────
+
     async fn handle_normal_key(&mut self, key: KeyEvent) -> anyhow::Result<()> {
         match key.code {
             KeyCode::Char('q') => self.running = false,
@@ -183,29 +199,29 @@ impl App {
             }
             KeyCode::Left => self.screen = self.screen.prev(),
             KeyCode::Right => self.screen = self.screen.next(),
-            KeyCode::Up => match self.screen {
-                Screen::Accounts => {
-                    move_table_selection(&mut self.account_table_state, self.accounts.len(), -1);
-                }
-                Screen::Categories => {
-                    move_table_selection(&mut self.category_table_state, self.categories.len(), -1);
-                }
+            _ => match self.screen {
+                Screen::Accounts => self.handle_accounts_key(key.code).await?,
+                Screen::Categories => self.handle_categories_key(key.code).await?,
+                Screen::Transactions => self.handle_transactions_key(key.code).await?,
                 _ => {}
             },
-            KeyCode::Down => match self.screen {
-                Screen::Accounts => {
-                    move_table_selection(&mut self.account_table_state, self.accounts.len(), 1);
-                }
-                Screen::Categories => {
-                    move_table_selection(&mut self.category_table_state, self.categories.len(), 1);
-                }
-                _ => {}
-            },
-            KeyCode::Char('n') if self.screen == Screen::Accounts => {
+        }
+        Ok(())
+    }
+
+    async fn handle_accounts_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        match code {
+            KeyCode::Up => {
+                move_table_selection(&mut self.account_table_state, self.accounts.len(), -1);
+            }
+            KeyCode::Down => {
+                move_table_selection(&mut self.account_table_state, self.accounts.len(), 1);
+            }
+            KeyCode::Char('n') => {
                 self.account_form = Some(AccountForm::new_create());
                 self.input_mode = InputMode::Editing;
             }
-            KeyCode::Char('e') if self.screen == Screen::Accounts => {
+            KeyCode::Char('e') => {
                 if let Some(acc) = self
                     .account_table_state
                     .selected()
@@ -215,7 +231,7 @@ impl App {
                     self.input_mode = InputMode::Editing;
                 }
             }
-            KeyCode::Char('d') if self.screen == Screen::Accounts => {
+            KeyCode::Char('d') => {
                 if let Some(acc) = self
                     .account_table_state
                     .selected()
@@ -226,11 +242,32 @@ impl App {
                         Some(ConfirmPopup::new(format!("Deactivate \"{}\"?", acc.name)));
                 }
             }
-            KeyCode::Char('n') if self.screen == Screen::Categories => {
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn handle_categories_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        match code {
+            KeyCode::Up => {
+                move_table_selection(
+                    &mut self.category_table_state,
+                    self.categories.len(),
+                    -1,
+                );
+            }
+            KeyCode::Down => {
+                move_table_selection(
+                    &mut self.category_table_state,
+                    self.categories.len(),
+                    1,
+                );
+            }
+            KeyCode::Char('n') => {
                 self.category_form = Some(CategoryForm::new_create());
                 self.input_mode = InputMode::Editing;
             }
-            KeyCode::Char('e') if self.screen == Screen::Categories => {
+            KeyCode::Char('e') => {
                 if let Some(cat) = self
                     .category_table_state
                     .selected()
@@ -240,7 +277,7 @@ impl App {
                     self.input_mode = InputMode::Editing;
                 }
             }
-            KeyCode::Char('d') if self.screen == Screen::Categories => {
+            KeyCode::Char('d') => {
                 if let Some(cat) = self
                     .category_table_state
                     .selected()
@@ -263,11 +300,89 @@ impl App {
         Ok(())
     }
 
+    async fn handle_transactions_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        match code {
+            KeyCode::Up => {
+                move_table_selection(
+                    &mut self.transaction_table_state,
+                    self.transactions.len(),
+                    -1,
+                );
+            }
+            KeyCode::Down => {
+                move_table_selection(
+                    &mut self.transaction_table_state,
+                    self.transactions.len(),
+                    1,
+                );
+            }
+            KeyCode::Char('n') => {
+                if self.accounts.is_empty() {
+                    self.status_error = Some("Create an account first".into());
+                } else if self.categories.is_empty() {
+                    self.status_error = Some("Create a category first".into());
+                } else {
+                    self.transaction_form = Some(TransactionForm::new_create(
+                        &self.accounts,
+                        &self.categories,
+                    ));
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('e') => {
+                if let Some(txn) = self
+                    .transaction_table_state
+                    .selected()
+                    .and_then(|i| self.transactions.get(i))
+                {
+                    if txn.installment_purchase_id.is_some() {
+                        self.status_error = Some(
+                            "Installment transactions are managed from the Installments screen"
+                                .into(),
+                        );
+                    } else {
+                        let txn = txn.clone();
+                        self.transaction_form = Some(TransactionForm::new_edit(
+                            &txn,
+                            &self.accounts,
+                            &self.categories,
+                        ));
+                        self.input_mode = InputMode::Editing;
+                    }
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(txn) = self
+                    .transaction_table_state
+                    .selected()
+                    .and_then(|i| self.transactions.get(i))
+                {
+                    if txn.installment_purchase_id.is_some() {
+                        self.status_error = Some(
+                            "Installment transactions are managed from the Installments screen"
+                                .into(),
+                        );
+                    } else {
+                        let txn_id = txn.id;
+                        let txn_desc = txn.description.clone();
+                        self.confirm_action = Some(ConfirmAction::DeleteTransaction(txn_id));
+                        self.confirm_popup =
+                            Some(ConfirmPopup::new(format!("Delete \"{txn_desc}\"?")));
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    // ── Editing-mode dispatch ─────────────────────────────────────────
+
     async fn handle_editing_key(&mut self, key: KeyEvent) -> anyhow::Result<()> {
-        // Handle these first to avoid borrow conflict with `form`
         if key.code == KeyCode::Esc {
             self.account_form = None;
             self.category_form = None;
+            self.transaction_form = None;
             self.input_mode = InputMode::Normal;
             return Ok(());
         }
@@ -276,155 +391,207 @@ impl App {
                 self.submit_account_form().await?;
             } else if self.category_form.is_some() {
                 self.submit_category_form().await?;
+            } else if self.transaction_form.is_some() {
+                self.submit_transaction_form().await?;
             }
             return Ok(());
         }
 
-        if let Some(form) = &mut self.account_form {
-            match key.code {
-                KeyCode::Tab | KeyCode::Down => {
-                    let max = form.visible_fields().len() - 1;
-                    if form.active_field < max {
-                        form.active_field += 1;
-                    }
-                }
-                KeyCode::BackTab | KeyCode::Up => {
-                    if form.active_field > 0 {
-                        form.active_field -= 1;
-                    }
-                }
-                _ => {
-                    match form.active_field_id() {
-                        AccountField::Name => form.name.handle_key(key.code),
-                        AccountField::CreditLimit => form.credit_limit.handle_key(key.code),
-                        AccountField::BillingDay => form.billing_day.handle_key(key.code),
-                        AccountField::DueDay => form.due_day.handle_key(key.code),
-                        // Toggle fields
-                        AccountField::AccountType => {
-                            if is_toggle_key(key.code) {
-                                form.account_type = match form.account_type {
-                                    AccountType::Checking => AccountType::Cash,
-                                    AccountType::Cash => AccountType::Checking,
-                                };
-                                if form.account_type == AccountType::Cash {
-                                    form.has_credit_card = false;
-                                    form.has_debit_card = false;
-                                }
-                                let max = form.visible_fields().len() - 1;
-                                form.active_field = form.active_field.min(max);
-                            }
-                        }
-                        AccountField::HasCreditCard => {
-                            if is_toggle_key(key.code) {
-                                form.has_credit_card = !form.has_credit_card;
-                                let max = form.visible_fields().len() - 1;
-                                form.active_field = form.active_field.min(max);
-                            }
-                        }
-                        AccountField::HasDebitCard => {
-                            if is_toggle_key(key.code) {
-                                form.has_debit_card = !form.has_debit_card;
-                            }
-                        }
-                    }
-                }
-            }
-        } else if let Some(form) = &mut self.category_form {
-            match key.code {
-                KeyCode::Tab | KeyCode::Down => {
-                    if form.active_field < CategoryField::ALL.len() - 1 {
-                        form.active_field += 1;
-                    }
-                }
-                KeyCode::BackTab | KeyCode::Up => {
-                    if form.active_field > 0 {
-                        form.active_field -= 1;
-                    }
-                }
-                _ => match form.active_field_id() {
-                    CategoryField::Name => form.name.handle_key(key.code),
-                    CategoryField::CategoryType => {
-                        if is_toggle_key(key.code) {
-                            form.category_type = match form.category_type {
-                                CategoryType::Expense => CategoryType::Income,
-                                CategoryType::Income => CategoryType::Expense,
-                            };
-                        }
-                    }
-                },
-            }
+        if self.account_form.is_some() {
+            self.handle_account_form_key(key.code);
+        } else if self.category_form.is_some() {
+            self.handle_category_form_key(key.code);
+        } else if self.transaction_form.is_some() {
+            self.handle_transaction_form_key(key.code);
         }
         Ok(())
     }
 
+    fn handle_account_form_key(&mut self, code: KeyCode) {
+        let form = self.account_form.as_mut().unwrap();
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                let max = form.visible_fields().len() - 1;
+                if form.active_field < max {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                AccountField::Name => form.name.handle_key(code),
+                AccountField::CreditLimit => form.credit_limit.handle_key(code),
+                AccountField::BillingDay => form.billing_day.handle_key(code),
+                AccountField::DueDay => form.due_day.handle_key(code),
+                AccountField::AccountType => {
+                    if is_toggle_key(code) {
+                        form.account_type = match form.account_type {
+                            AccountType::Checking => AccountType::Cash,
+                            AccountType::Cash => AccountType::Checking,
+                        };
+                        if form.account_type == AccountType::Cash {
+                            form.has_credit_card = false;
+                            form.has_debit_card = false;
+                        }
+                        let max = form.visible_fields().len() - 1;
+                        form.active_field = form.active_field.min(max);
+                    }
+                }
+                AccountField::HasCreditCard => {
+                    if is_toggle_key(code) {
+                        form.has_credit_card = !form.has_credit_card;
+                        let max = form.visible_fields().len() - 1;
+                        form.active_field = form.active_field.min(max);
+                    }
+                }
+                AccountField::HasDebitCard => {
+                    if is_toggle_key(code) {
+                        form.has_debit_card = !form.has_debit_card;
+                    }
+                }
+            },
+        }
+    }
+
+    fn handle_category_form_key(&mut self, code: KeyCode) {
+        let form = self.category_form.as_mut().unwrap();
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                if form.active_field < CategoryField::ALL.len() - 1 {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                CategoryField::Name => form.name.handle_key(code),
+                CategoryField::CategoryType => {
+                    if is_toggle_key(code) {
+                        form.category_type = match form.category_type {
+                            CategoryType::Expense => CategoryType::Income,
+                            CategoryType::Income => CategoryType::Expense,
+                        };
+                    }
+                }
+            },
+        }
+    }
+
+    fn handle_transaction_form_key(&mut self, code: KeyCode) {
+        let form = self.transaction_form.as_mut().unwrap();
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                if form.active_field < TransactionField::ALL.len() - 1 {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                TransactionField::Date => form.date.handle_key(code),
+                TransactionField::Description => form.description.handle_key(code),
+                TransactionField::Amount => form.amount.handle_key(code),
+                TransactionField::TransactionType => {
+                    if is_toggle_key(code) {
+                        form.transaction_type = match form.transaction_type {
+                            TransactionType::Expense => TransactionType::Income,
+                            TransactionType::Income => TransactionType::Expense,
+                        };
+                        form.category_idx = 0;
+                    }
+                }
+                TransactionField::Account => {
+                    if is_toggle_key(code) {
+                        let len = self.accounts.len();
+                        if len > 0 {
+                            form.account_idx = match code {
+                                KeyCode::Left | KeyCode::Char(' ') => {
+                                    (form.account_idx + len - 1) % len
+                                }
+                                _ => (form.account_idx + 1) % len,
+                            };
+                            form.payment_method_idx = 0;
+                        }
+                    }
+                }
+                TransactionField::PaymentMethod => {
+                    if is_toggle_key(code) {
+                        let methods = self
+                            .accounts
+                            .get(form.account_idx)
+                            .map(|a| a.allowed_payment_methods())
+                            .unwrap_or_default();
+                        let len = methods.len();
+                        if len > 0 {
+                            form.payment_method_idx = match code {
+                                KeyCode::Left | KeyCode::Char(' ') => {
+                                    (form.payment_method_idx + len - 1) % len
+                                }
+                                _ => (form.payment_method_idx + 1) % len,
+                            };
+                        }
+                    }
+                }
+                TransactionField::Category => {
+                    if is_toggle_key(code) {
+                        let len = self
+                            .categories
+                            .iter()
+                            .filter(|c| {
+                                c.parsed_type()
+                                    == crate::ui::screens::transactions::category_type_for(
+                                        form.transaction_type,
+                                    )
+                            })
+                            .count();
+                        if len > 0 {
+                            form.category_idx = match code {
+                                KeyCode::Left | KeyCode::Char(' ') => {
+                                    (form.category_idx + len - 1) % len
+                                }
+                                _ => (form.category_idx + 1) % len,
+                            };
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    // ── Form submission ───────────────────────────────────────────────
+
     async fn submit_account_form(&mut self) -> anyhow::Result<()> {
         use crate::db::accounts;
-        use rust_decimal::Decimal;
 
         let form = self.account_form.as_ref().unwrap();
-
-        // Validate
-        let name = form.name.value.trim().to_string();
-        if name.is_empty() {
-            self.account_form.as_mut().unwrap().error = Some("Name is required".into());
-            return Ok(());
-        }
-
-        let credit_limit = if form.has_credit_card {
-            match form.credit_limit.value.trim().parse::<Decimal>() {
-                Ok(v) if v > Decimal::ZERO => Some(v),
-                Ok(_) => {
-                    self.account_form.as_mut().unwrap().error =
-                        Some("Credit limit must be positive".into());
-                    return Ok(());
-                }
-                Err(_) => {
-                    self.account_form.as_mut().unwrap().error =
-                        Some("Invalid credit limit".into());
-                    return Ok(());
-                }
+        let validated = match form.validate() {
+            Ok(v) => v,
+            Err(e) => {
+                self.account_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
             }
-        } else {
-            None
-        };
-
-        let billing_day = if form.has_credit_card {
-            match form.billing_day.value.trim().parse::<i16>() {
-                Ok(v) if (1..=28).contains(&v) => Some(v),
-                _ => {
-                    self.account_form.as_mut().unwrap().error =
-                        Some("Billing day must be 1-28".into());
-                    return Ok(());
-                }
-            }
-        } else {
-            None
-        };
-
-        let due_day = if form.has_credit_card {
-            match form.due_day.value.trim().parse::<i16>() {
-                Ok(v) if (1..=28).contains(&v) => Some(v),
-                _ => {
-                    self.account_form.as_mut().unwrap().error =
-                        Some("Due day must be 1-28".into());
-                    return Ok(());
-                }
-            }
-        } else {
-            None
         };
 
         match form.mode {
             AccountFormMode::Create => {
                 accounts::create_account(
                     &self.pool,
-                    &name,
-                    form.account_type,
-                    form.has_credit_card,
-                    credit_limit,
-                    billing_day,
-                    due_day,
-                    form.has_debit_card,
+                    &validated.name,
+                    validated.account_type,
+                    validated.has_credit_card,
+                    validated.credit_limit,
+                    validated.billing_day,
+                    validated.due_day,
+                    validated.has_debit_card,
                 )
                 .await?;
             }
@@ -432,13 +599,13 @@ impl App {
                 accounts::update_account(
                     &self.pool,
                     id,
-                    &name,
-                    form.account_type,
-                    form.has_credit_card,
-                    credit_limit,
-                    billing_day,
-                    due_day,
-                    form.has_debit_card,
+                    &validated.name,
+                    validated.account_type,
+                    validated.has_credit_card,
+                    validated.credit_limit,
+                    validated.billing_day,
+                    validated.due_day,
+                    validated.has_debit_card,
                 )
                 .await?;
             }
@@ -461,19 +628,27 @@ impl App {
         use crate::db::categories;
 
         let form = self.category_form.as_ref().unwrap();
-
-        let name = form.name.value.trim().to_string();
-        if name.is_empty() {
-            self.category_form.as_mut().unwrap().error = Some("Name is required".into());
-            return Ok(());
-        }
+        let validated = match form.validate() {
+            Ok(v) => v,
+            Err(e) => {
+                self.category_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
+            }
+        };
 
         match form.mode {
             CategoryFormMode::Create => {
-                categories::create_category(&self.pool, &name, form.category_type).await?;
+                categories::create_category(&self.pool, &validated.name, validated.category_type)
+                    .await?;
             }
             CategoryFormMode::Edit(id) => {
-                categories::update_category(&self.pool, id, &name, form.category_type).await?;
+                categories::update_category(
+                    &self.pool,
+                    id,
+                    &validated.name,
+                    validated.category_type,
+                )
+                .await?;
             }
         }
 
@@ -487,6 +662,61 @@ impl App {
         crate::db::categories::delete_category(&self.pool, id).await?;
         self.load_data().await?;
         clamp_selection(&mut self.category_table_state, self.categories.len());
+        Ok(())
+    }
+
+    async fn submit_transaction_form(&mut self) -> anyhow::Result<()> {
+        use crate::db::transactions;
+
+        let form = self.transaction_form.as_ref().unwrap();
+        let validated = match form.validate(&self.accounts, &self.categories) {
+            Ok(v) => v,
+            Err(e) => {
+                self.transaction_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
+            }
+        };
+
+        match form.mode {
+            TransactionFormMode::Create => {
+                transactions::create_transaction(
+                    &self.pool,
+                    validated.amount,
+                    &validated.description,
+                    validated.category_id,
+                    validated.account_id,
+                    validated.transaction_type,
+                    validated.payment_method,
+                    validated.date,
+                )
+                .await?;
+            }
+            TransactionFormMode::Edit(id) => {
+                transactions::update_transaction(
+                    &self.pool,
+                    id,
+                    validated.amount,
+                    &validated.description,
+                    validated.category_id,
+                    validated.account_id,
+                    validated.transaction_type,
+                    validated.payment_method,
+                    validated.date,
+                )
+                .await?;
+            }
+        }
+
+        self.transaction_form = None;
+        self.input_mode = InputMode::Normal;
+        self.load_data().await?;
+        Ok(())
+    }
+
+    async fn execute_delete_transaction(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::transactions::delete_transaction(&self.pool, id).await?;
+        self.load_data().await?;
+        clamp_selection(&mut self.transaction_table_state, self.transactions.len());
         Ok(())
     }
 }

@@ -17,6 +17,13 @@ impl TransactionType {
             Self::Income => "income",
         }
     }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Expense => "Expense",
+            Self::Income => "Income",
+        }
+    }
 }
 
 impl fmt::Display for TransactionType {
@@ -106,4 +113,16 @@ pub struct Transaction {
     pub installment_purchase_id: Option<i32>,
     pub installment_number: Option<i16>,
     pub created_at: DateTime<Utc>,
+}
+
+impl Transaction {
+    pub fn parsed_type(&self) -> TransactionType {
+        self.transaction_type
+            .parse()
+            .unwrap_or(TransactionType::Expense)
+    }
+
+    pub fn parsed_payment_method(&self) -> PaymentMethod {
+        self.payment_method.parse().unwrap_or(PaymentMethod::Pix)
+    }
 }
