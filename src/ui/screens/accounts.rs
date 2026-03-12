@@ -44,7 +44,62 @@ pub enum AccountField {
     HasDebitCard,
 }
 
+pub struct ValidatedAccount {
+    pub name: String,
+    pub account_type: AccountType,
+    pub has_credit_card: bool,
+    pub credit_limit: Option<Decimal>,
+    pub billing_day: Option<i16>,
+    pub due_day: Option<i16>,
+    pub has_debit_card: bool,
+}
+
 impl AccountForm {
+    pub fn validate(&self) -> Result<ValidatedAccount, String> {
+        let name = self.name.value.trim().to_string();
+        if name.is_empty() {
+            return Err("Name is required".into());
+        }
+
+        let credit_limit = if self.has_credit_card {
+            match self.credit_limit.value.trim().parse::<Decimal>() {
+                Ok(v) if v > Decimal::ZERO => Some(v),
+                Ok(_) => return Err("Credit limit must be positive".into()),
+                Err(_) => return Err("Invalid credit limit".into()),
+            }
+        } else {
+            None
+        };
+
+        let billing_day = if self.has_credit_card {
+            match self.billing_day.value.trim().parse::<i16>() {
+                Ok(v) if (1..=28).contains(&v) => Some(v),
+                _ => return Err("Billing day must be 1-28".into()),
+            }
+        } else {
+            None
+        };
+
+        let due_day = if self.has_credit_card {
+            match self.due_day.value.trim().parse::<i16>() {
+                Ok(v) if (1..=28).contains(&v) => Some(v),
+                _ => return Err("Due day must be 1-28".into()),
+            }
+        } else {
+            None
+        };
+
+        Ok(ValidatedAccount {
+            name,
+            account_type: self.account_type,
+            has_credit_card: self.has_credit_card,
+            credit_limit,
+            billing_day,
+            due_day,
+            has_debit_card: self.has_debit_card,
+        })
+    }
+
     pub fn new_create() -> Self {
         Self {
             mode: AccountFormMode::Create,

@@ -37,7 +37,24 @@ impl CategoryField {
     pub const ALL: [Self; 2] = [Self::Name, Self::CategoryType];
 }
 
+pub struct ValidatedCategory {
+    pub name: String,
+    pub category_type: CategoryType,
+}
+
 impl CategoryForm {
+    pub fn validate(&self) -> Result<ValidatedCategory, String> {
+        let name = self.name.value.trim().to_string();
+        if name.is_empty() {
+            return Err("Name is required".into());
+        }
+
+        Ok(ValidatedCategory {
+            name,
+            category_type: self.category_type,
+        })
+    }
+
     pub fn new_create() -> Self {
         Self {
             mode: CategoryFormMode::Create,
