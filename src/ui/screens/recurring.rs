@@ -3,13 +3,16 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::Line,
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
 
 use crate::{
-    models::{Account, Category, PaymentMethod, Transaction, TransactionType},
+    models::{
+        Account, Category, Frequency, PaymentMethod, RecurringTransaction,
+        TransactionType,
+    },
     ui::{
         App,
         components::{
@@ -20,66 +23,74 @@ use crate::{
     },
 };
 
-pub enum TransactionFormMode {
+pub enum RecurringFormMode {
     Create,
     Edit(i32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransactionField {
-    Date,
+pub enum RecurringField {
     Description,
     Amount,
     TransactionType,
     Account,
     PaymentMethod,
     Category,
+    Frequency,
+    NextDue,
 }
 
-impl TransactionField {
-    pub const ALL: [Self; 7] = [
-        Self::Date,
+impl RecurringField {
+    pub const ALL: [Self; 8] = [
         Self::Description,
         Self::Amount,
         Self::TransactionType,
         Self::Account,
         Self::PaymentMethod,
         Self::Category,
+        Self::Frequency,
+        Self::NextDue,
     ];
 }
 
-pub struct TransactionForm {
-    pub mode: TransactionFormMode,
-    pub date: InputField,
+pub struct RecurringForm {
+    pub mode: RecurringFormMode,
     pub description: InputField,
     pub amount: InputField,
     pub transaction_type: TransactionType,
     pub account_idx: usize,
     pub payment_method_idx: usize,
     pub category_idx: usize,
+    pub frequency_idx: usize,
+    pub next_due: InputField,
     pub active_field: usize,
     pub error: Option<String>,
 }
 
-pub struct ValidatedTransaction {
-    pub date: NaiveDate,
+pub struct ValidatedRecurring {
     pub description: String,
     pub amount: Decimal,
+    pub transaction_type: TransactionType,
     pub account_id: i32,
     pub payment_method: PaymentMethod,
     pub category_id: i32,
-    pub transaction_type: TransactionType,
+    pub frequency: Frequency,
+    pub next_due: NaiveDate,
 }
 
-impl TransactionForm {
+pub const FREQUENCIES: [Frequency; 4] = [
+    Frequency::Daily,
+    Frequency::Weekly,
+    Frequency::Monthly,
+    Frequency::Yearly,
+];
+
+impl RecurringForm {
     pub fn validate(
         &self,
         accounts: &[Account],
         categories: &[Category],
-    ) -> Result<ValidatedTransaction, String> {
-        let date = NaiveDate::parse_from_str(self.date.value.trim(), "%d-%m-%Y")
-            .map_err(|_| "Invalid date (use DD-MM-YYYY)".to_string())?;
-
+    ) -> Result<ValidatedRecurring, String> {
         let description = self.description.value.trim().to_string();
         if description.is_empty() {
             return Err("Description is required".into());
@@ -108,40 +119,49 @@ impl TransactionForm {
             .map(|c| c.id)
             .ok_or("No category selected")?;
 
-        Ok(ValidatedTransaction {
-            date,
+        let frequency = FREQUENCIES
+            .get(self.frequency_idx)
+            .copied()
+            .ok_or("No frequency selected")?;
+
+        let next_due = NaiveDate::parse_from_str(self.next_due.value.trim(), "%d-%m-%Y")
+            .map_err(|_| "Invalid date (use DD-MM-YYYY)".to_string())?;
+
+        Ok(ValidatedRecurring {
             description,
             amount,
+            transaction_type,
             account_id,
             payment_method,
             category_id,
-            transaction_type,
+            frequency,
+            next_due,
         })
     }
 
     pub fn new_create() -> Self {
         let today = Local::now().date_naive();
-
         Self {
-            mode: TransactionFormMode::Create,
-            date: InputField::new("Date").with_value(today.format("%d-%m-%Y").to_string()),
+            mode: RecurringFormMode::Create,
             description: InputField::new("Description"),
             amount: InputField::new("Amount"),
             transaction_type: TransactionType::Expense,
             account_idx: 0,
             payment_method_idx: 0,
             category_idx: 0,
+            frequency_idx: 2, // default to Monthly
+            next_due: InputField::new("Next Due").with_value(today.format("%d-%m-%Y").to_string()),
             active_field: 0,
             error: None,
         }
     }
 
-    pub fn new_edit(txn: &Transaction, accounts: &[Account], categories: &[Category]) -> Self {
-        let txn_type = txn.parsed_type();
+    pub fn new_edit(r: &RecurringTransaction, accounts: &[Account], categories: &[Category]) -> Self {
+        let txn_type = r.parsed_type();
 
         let account_idx = accounts
             .iter()
-            .position(|a| a.id == txn.account_id)
+            .position(|a| a.id == r.account_id)
             .unwrap_or(0);
 
         let payment_method_idx = accounts
@@ -149,7 +169,7 @@ impl TransactionForm {
             .map(|a| {
                 a.allowed_payment_methods()
                     .iter()
-                    .position(|m| *m == txn.parsed_payment_method())
+                    .position(|m| *m == r.parsed_payment_method())
                     .unwrap_or(0)
             })
             .unwrap_or(0);
@@ -160,30 +180,37 @@ impl TransactionForm {
             .collect();
         let category_idx = filtered_categories
             .iter()
-            .position(|c| c.id == txn.category_id)
+            .position(|c| c.id == r.category_id)
             .unwrap_or(0);
 
+        let frequency_idx = FREQUENCIES
+            .iter()
+            .position(|f| f.as_str() == r.frequency)
+            .unwrap_or(2);
+
         Self {
-            mode: TransactionFormMode::Edit(txn.id),
-            date: InputField::new("Date").with_value(txn.date.format("%d-%m-%Y").to_string()),
-            description: InputField::new("Description").with_value(&txn.description),
-            amount: InputField::new("Amount").with_value(txn.amount.to_string()),
+            mode: RecurringFormMode::Edit(r.id),
+            description: InputField::new("Description").with_value(&r.description),
+            amount: InputField::new("Amount").with_value(r.amount.to_string()),
             transaction_type: txn_type,
             account_idx,
             payment_method_idx,
             category_idx,
+            frequency_idx,
+            next_due: InputField::new("Next Due")
+                .with_value(r.next_due.format("%d-%m-%Y").to_string()),
             active_field: 0,
             error: None,
         }
     }
 
-    pub fn active_field_id(&self) -> TransactionField {
-        TransactionField::ALL[self.active_field.min(TransactionField::ALL.len() - 1)]
+    pub fn active_field_id(&self) -> RecurringField {
+        RecurringField::ALL[self.active_field.min(RecurringField::ALL.len() - 1)]
     }
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    if app.transaction_form.is_some() {
+    if app.recurring_form.is_some() {
         render_form(frame, area, app);
     } else {
         render_list(frame, area, app);
@@ -194,112 +221,118 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let [table_area, detail_area] =
         Layout::vertical([Constraint::Min(5), Constraint::Length(6)]).areas(area);
 
-    let header = Row::new(["Date", "Description", "Amount", "Account", "Category"])
+    let today = Local::now().date_naive();
+
+    let header = Row::new(["Description", "Amount", "Frequency", "Next Due", "Account", "Category"])
         .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
-        .transactions
+        .recurring_list
         .iter()
-        .map(|txn| {
-            let account_name = app.account_name(txn.account_id);
-            let category_name = app.category_name(txn.category_id);
+        .map(|r| {
+            let account_name = app.account_name(r.account_id);
+            let category_name = app.category_name(r.category_id);
 
-            let amount_str = if txn.parsed_type() == TransactionType::Expense {
-                format!("-{}", format_brl(txn.amount))
+            let due_style = if r.next_due <= today {
+                Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)
             } else {
-                format!("+{}", format_brl(txn.amount))
+                Style::default()
             };
 
             Row::new([
-                txn.date.format("%d-%m-%Y").to_string(),
-                txn.description.clone(),
-                amount_str,
+                r.description.clone(),
+                format_brl(r.amount),
+                r.parsed_frequency().label().to_string(),
+                r.next_due.format("%d-%m-%Y").to_string(),
                 account_name.to_string(),
                 category_name.to_string(),
             ])
+            .style(due_style)
         })
         .collect();
 
     let table = Table::new(
         rows,
         [
-            Constraint::Length(12),
             Constraint::Min(15),
-            Constraint::Length(16),
+            Constraint::Length(14),
+            Constraint::Length(10),
+            Constraint::Length(12),
             Constraint::Length(14),
             Constraint::Length(14),
         ],
     )
     .header(header)
-    .block(Block::default().borders(Borders::ALL).title("Transactions"))
+    .block(Block::default().borders(Borders::ALL).title("Recurring Transactions"))
     .row_highlight_style(
         Style::new()
             .bg(Color::DarkGray)
             .add_modifier(Modifier::BOLD),
     );
 
-    frame.render_stateful_widget(table, table_area, &mut app.transaction_table_state);
+    frame.render_stateful_widget(table, table_area, &mut app.recurring_table_state);
 
     let detail_content = match app
-        .transaction_table_state
+        .recurring_table_state
         .selected()
-        .and_then(|i| app.transactions.get(i))
+        .and_then(|i| app.recurring_list.get(i))
     {
-        Some(txn) => {
-            let account_name = app.account_name(txn.account_id);
+        Some(r) => {
+            let account_name = app.account_name(r.account_id);
+            let category_name = app.category_name(r.category_id);
 
-            let installment_info = match (txn.installment_purchase_id, txn.installment_number) {
-                (Some(_), Some(n)) => format!(" | Installment #{n}"),
-                _ => String::new(),
-            };
+            let pending = if r.next_due <= today { " (PENDING)" } else { "" };
 
             vec![
                 Line::from(format!(
                     " {} | {} | {}",
-                    txn.date.format("%d-%m-%Y"),
-                    txn.parsed_type().label(),
-                    txn.parsed_payment_method().label(),
+                    r.description, account_name, category_name,
                 )),
                 Line::from(format!(
-                    " {} | {} | {}{}",
-                    txn.description,
-                    format_brl(txn.amount),
-                    account_name,
-                    installment_info,
+                    " {} | {} | {} | Next: {}{}",
+                    r.parsed_type().label(),
+                    r.parsed_payment_method().label(),
+                    r.parsed_frequency().label(),
+                    r.next_due.format("%d-%m-%Y"),
+                    pending,
                 )),
                 Line::from(format!(
-                    " Created: {}",
-                    txn.created_at.format("%d-%m-%Y %H:%M")
+                    " Amount: {} | Created: {}",
+                    format_brl(r.amount),
+                    r.created_at.format("%d-%m-%Y %H:%M"),
+                )),
+                Line::from(Span::styled(
+                    " [c] Confirm pending  [n] New  [e] Edit  [d] Deactivate",
+                    Style::new().fg(Color::DarkGray),
                 )),
             ]
         }
-        None => vec![Line::from(" No transaction selected.")],
+        None => vec![Line::from(" No recurring transaction selected.")],
     };
 
     let detail_block = Block::default()
         .borders(Borders::ALL)
-        .title("Transaction Details");
+        .title("Recurring Details");
     let detail = Paragraph::new(detail_content).block(detail_block);
     frame.render_widget(detail, detail_area);
 }
 
 fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
-    let form = app.transaction_form.as_ref().unwrap();
+    let form = app.recurring_form.as_ref().unwrap();
 
     let title = match form.mode {
-        TransactionFormMode::Create => "New Transaction",
-        TransactionFormMode::Edit(_) => "Edit Transaction",
+        RecurringFormMode::Create => "New Recurring Transaction",
+        RecurringFormMode::Edit(_) => "Edit Recurring Transaction",
     };
 
     let mut lines: Vec<Line> = Vec::new();
 
-    for (i, field) in TransactionField::ALL.iter().enumerate() {
+    for (i, field) in RecurringField::ALL.iter().enumerate() {
         let active = i == form.active_field;
         let line = match field {
-            TransactionField::Date => form.date.render_line(active),
-            TransactionField::Description => form.description.render_line(active),
-            TransactionField::Amount => form.amount.render_line(active),
-            TransactionField::TransactionType => render_toggle(
+            RecurringField::Description => form.description.render_line(active),
+            RecurringField::Amount => form.amount.render_line(active),
+            RecurringField::TransactionType => render_toggle(
                 "Type",
                 &["Expense", "Income"],
                 if form.transaction_type == TransactionType::Expense {
@@ -309,11 +342,11 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                 },
                 active,
             ),
-            TransactionField::Account => {
+            RecurringField::Account => {
                 let names: Vec<&str> = app.accounts.iter().map(|a| a.name.as_str()).collect();
                 render_selector("Account", &names, form.account_idx, active, "no accounts")
             }
-            TransactionField::PaymentMethod => {
+            RecurringField::PaymentMethod => {
                 let methods: Vec<&str> = app
                     .accounts
                     .get(form.account_idx)
@@ -326,7 +359,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .unwrap_or_default();
                 render_selector("Payment", &methods, form.payment_method_idx, active, "none")
             }
-            TransactionField::Category => {
+            RecurringField::Category => {
                 let filtered: Vec<&str> = app
                     .categories
                     .iter()
@@ -335,6 +368,11 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .collect();
                 render_selector("Category", &filtered, form.category_idx, active, "none")
             }
+            RecurringField::Frequency => {
+                let labels: Vec<&str> = FREQUENCIES.iter().map(|f| f.label()).collect();
+                render_toggle("Frequency", &labels, form.frequency_idx, active)
+            }
+            RecurringField::NextDue => form.next_due.render_line(active),
         };
         lines.push(line);
     }
@@ -344,4 +382,3 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::default().borders(Borders::ALL).title(title);
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
-

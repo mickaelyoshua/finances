@@ -2,7 +2,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::Line,
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 
@@ -10,7 +10,10 @@ use crate::{
     models::CategoryType,
     ui::{
         App,
-        components::{input::InputField, toggle::render_toggle},
+        components::{
+            input::InputField,
+            toggle::{push_form_error, render_toggle},
+        },
     },
 };
 
@@ -180,13 +183,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
         lines.push(line);
     }
 
-    if let Some(err) = &form.error {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            format!("Error: {}", err),
-            Style::new().fg(Color::Red),
-        )));
-    }
+    push_form_error(&mut lines, &form.error);
 
     let block = Block::default().borders(Borders::ALL).title(title);
     frame.render_widget(Paragraph::new(lines).block(block), area);

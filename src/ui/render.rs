@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Tabs},
+    widgets::{Paragraph, Tabs},
 };
 
 use super::app::{App, InputMode, Screen};
@@ -47,23 +47,18 @@ fn render_content(frame: &mut Frame, area: Rect, app: &mut App) {
         Screen::Accounts => super::screens::accounts::render(frame, area, app),
         Screen::Categories => super::screens::categories::render(frame, area, app),
         Screen::Transactions => super::screens::transactions::render(frame, area, app),
-        _ => {
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title(app.screen.label());
-            let paragraph =
-                Paragraph::new(format!("{} - coming soon", app.screen.label())).block(block);
-
-            frame.render_widget(paragraph, area);
-        }
+        Screen::Budgets => super::screens::budgets::render(frame, area, app),
+        Screen::Installments => super::screens::installments::render(frame, area, app),
+        Screen::Recurring => super::screens::recurring::render(frame, area, app),
     }
 }
 
 fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
-    if let Some(err) = &app.status_error {
+    if let Some(msg) = &app.status_message {
+        let color = if msg.is_error { Color::Red } else { Color::Green };
         let line = Line::from(Span::styled(
-            format!(" {err}"),
-            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+            format!(" {}", msg.text),
+            Style::new().fg(color).add_modifier(Modifier::BOLD),
         ));
         frame.render_widget(Paragraph::new(line), area);
         return;

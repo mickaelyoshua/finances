@@ -6,6 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 
 use crate::ui::{App, components::format::format_brl};
 
@@ -69,12 +70,7 @@ fn render_budgets(frame: &mut Frame, area: Rect, app: &App) {
         .budgets
         .iter()
         .map(|b| {
-            let cat_name = app
-                .categories
-                .iter()
-                .find(|c| c.id == b.category_id)
-                .map(|c| c.name.as_str())
-                .unwrap_or("?");
+            let cat_name = app.category_name(b.category_id);
 
             let spent = app
                 .budget_spent
@@ -82,7 +78,7 @@ fn render_budgets(frame: &mut Frame, area: Rect, app: &App) {
                 .copied()
                 .unwrap_or(Decimal::ZERO);
             let ratio = if b.amount > Decimal::ZERO {
-                (spent / b.amount).to_string().parse::<f64>().unwrap_or(0.0)
+                (spent / b.amount).to_f64().unwrap_or(0.0)
             } else {
                 0.0
             };
