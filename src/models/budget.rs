@@ -19,6 +19,14 @@ impl BudgetPeriod {
             Self::Yearly => "yearly",
         }
     }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Weekly => "Weekly",
+            Self::Monthly => "Monthly",
+            Self::Yearly => "Yearly",
+        }
+    }
 }
 
 impl fmt::Display for BudgetPeriod {
@@ -40,7 +48,7 @@ impl std::str::FromStr for BudgetPeriod {
     }
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, Clone, FromRow)]
 pub struct Budget {
     pub id: i32,
     pub category_id: i32,

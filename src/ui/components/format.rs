@@ -1,5 +1,22 @@
 use rust_decimal::Decimal;
 
+/// Parse a BRL-friendly amount string (accepts comma as decimal separator).
+/// Returns error if the value is not a positive number.
+pub fn parse_positive_amount(input: &str) -> Result<Decimal, String> {
+    input
+        .trim()
+        .replace(',', ".")
+        .parse::<Decimal>()
+        .map_err(|_| "Invalid amount".to_string())
+        .and_then(|v| {
+            if v > Decimal::ZERO {
+                Ok(v)
+            } else {
+                Err("Amount must be positive".into())
+            }
+        })
+}
+
 /// Format a Decimal value as Brazilian Real (BRL).
 /// Uses Brazilian convention: dot as thousands separator, comma as decimal separator.
 /// Examples: R$ 1.234,56  |  R$ 0,50  |  -R$ 100,00

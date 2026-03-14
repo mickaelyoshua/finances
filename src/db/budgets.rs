@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use sqlx::PgPool;
 
@@ -43,4 +46,36 @@ pub async fn delete_budget(pool: &PgPool, id: i32) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Compute current-period spending for all budgets in a single query.
+/// Each budget's date range depends on its period (weekly/monthly/yearly).
+pub async fn compute_all_spending(
+    pool: &PgPool,
+    weekly_start: NaiveDate,
+    monthly_start: NaiveDate,
+    yearly_start: NaiveDate,
+    today: NaiveDate,
+) -> Result<HashMap<i32, Decimal>, sqlx::Error> {
+    let rows: Vec<(i32, Decimal)> = sqlx::query_as(
+        "SELECT b.id, COALESCE(SUM(t.amount), 0)
+         FROM budgets b
+         LEFT JOIN transactions t ON t.category_id = b.category_id
+             AND t.transaction_type = 'expense'
+             AND t.date BETWEEN
+                 CASE b.period
+                     WHEN 'weekly' THEN $1
+                     WHEN 'monthly' THEN $2
+                     WHEN 'yearly' THEN $3
+                 END
+                 AND $4
+         GROUP BY b.id",
+    )
+    .bind(weekly_start)
+    .bind(monthly_start)
+    .bind(yearly_start)
+    .bind(today)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().collect())
 }

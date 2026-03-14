@@ -21,6 +21,15 @@ impl Frequency {
             Self::Yearly => "yearly",
         }
     }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Daily => "Daily",
+            Self::Weekly => "Weekly",
+            Self::Monthly => "Monthly",
+            Self::Yearly => "Yearly",
+        }
+    }
 }
 
 impl fmt::Display for Frequency {
@@ -61,5 +70,17 @@ pub struct RecurringTransaction {
 impl RecurringTransaction {
     pub fn parsed_frequency(&self) -> Frequency {
         self.frequency.parse().unwrap_or(Frequency::Monthly)
+    }
+
+    pub fn parsed_type(&self) -> super::TransactionType {
+        self.transaction_type
+            .parse()
+            .unwrap_or(super::TransactionType::Expense)
+    }
+
+    pub fn parsed_payment_method(&self) -> super::PaymentMethod {
+        self.payment_method
+            .parse()
+            .unwrap_or(super::PaymentMethod::Pix)
     }
 }

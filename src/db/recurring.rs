@@ -66,6 +66,38 @@ pub async fn advance_next_due(
     Ok(())
 }
 
+pub async fn update_recurring(
+    pool: &PgPool,
+    id: i32,
+    amount: Decimal,
+    description: &str,
+    category_id: i32,
+    account_id: i32,
+    transaction_type: TransactionType,
+    payment_method: PaymentMethod,
+    frequency: Frequency,
+    next_due: NaiveDate,
+) -> Result<RecurringTransaction, sqlx::Error> {
+    sqlx::query_as::<_, RecurringTransaction>(
+        "UPDATE recurring_transactions
+         SET amount = $2, description = $3, category_id = $4, account_id = $5,
+             transaction_type = $6, payment_method = $7, frequency = $8, next_due = $9
+         WHERE id = $1
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(amount)
+    .bind(description)
+    .bind(category_id)
+    .bind(account_id)
+    .bind(transaction_type.as_str())
+    .bind(payment_method.as_str())
+    .bind(frequency.as_str())
+    .bind(next_due)
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn deactivate_recurring(pool: &PgPool, id: i32) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE recurring_transactions SET active = FALSE WHERE id = $1")
         .bind(id)

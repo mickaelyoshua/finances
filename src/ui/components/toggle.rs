@@ -3,6 +3,17 @@ use ratatui::{
     text::{Line, Span},
 };
 
+/// Appends the form error block (blank line + red "Error: ...") if an error is present.
+pub fn push_form_error<'a>(lines: &mut Vec<Line<'a>>, error: &Option<String>) {
+    if let Some(err) = error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("Error: {err}"),
+            Style::new().fg(Color::Red),
+        )));
+    }
+}
+
 pub fn render_toggle<'a>(
     label: &str,
     options: &[&'a str],
@@ -30,4 +41,22 @@ pub fn render_toggle<'a>(
     }
 
     Line::from(spans)
+}
+
+/// Renders a cycling selector field, showing a grayed-out placeholder when the list is empty.
+pub fn render_selector<'a>(
+    label: &str,
+    options: &[&'a str],
+    selected: usize,
+    active: bool,
+    empty_hint: &str,
+) -> Line<'a> {
+    if options.is_empty() {
+        Line::from(Span::styled(
+            format!(" {label}: ({empty_hint})"),
+            Style::new().fg(Color::DarkGray),
+        ))
+    } else {
+        render_toggle(label, options, selected, active)
+    }
 }

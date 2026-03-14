@@ -24,6 +24,13 @@ impl TransactionType {
             Self::Income => "Income",
         }
     }
+
+    pub fn category_type(self) -> super::CategoryType {
+        match self {
+            Self::Expense => super::CategoryType::Expense,
+            Self::Income => super::CategoryType::Income,
+        }
+    }
 }
 
 impl fmt::Display for TransactionType {

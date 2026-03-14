@@ -83,13 +83,14 @@ pub async fn deactivate_account(pool: &PgPool, id: i32) -> Result<(), sqlx::Erro
 }
 
 /// Compute balance for a checking/cash account:
-/// incomes - non-credit expenses + transfers_in - transfers_out - credit_card_payments
+/// non-credit incomes − non-credit expenses + transfers in − transfers out − credit card payments
+///
+/// Credit income (e.g. refunds) reduces the credit card debt, not the checking balance,
+/// so it is excluded here just like credit expenses.
 pub async fn compute_balance(pool: &PgPool, account_id: i32) -> Result<Decimal, sqlx::Error> {
     let row: (Decimal,) = sqlx::query_as(
         "SELECT
-            COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = $1 AND transaction_type = 'income'), 0)
-            -- Credit expenses don't leave the checking account; they accumulate
-            -- on the card and are settled via credit_card_payments instead.
+            COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = $1 AND transaction_type = 'income' AND payment_method != 'credit'), 0)
             - COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = $1 AND transaction_type = 'expense' AND payment_method != 'credit'), 0)
             + COALESCE((SELECT SUM(amount) FROM transfers WHERE to_account_id = $1), 0)
             - COALESCE((SELECT SUM(amount) FROM transfers WHERE from_account_id = $1), 0)
@@ -102,11 +103,12 @@ pub async fn compute_balance(pool: &PgPool, account_id: i32) -> Result<Decimal, 
 }
 
 /// Compute credit card used amount for an account that has_credit_card:
-/// credit expenses - credit card payments made on this account
+/// credit expenses − credit income (refunds) − credit card payments
 pub async fn compute_credit_used(pool: &PgPool, account_id: i32) -> Result<Decimal, sqlx::Error> {
     let row: (Decimal,) = sqlx::query_as(
         "SELECT
-            COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = $1 AND payment_method = 'credit'), 0)
+            COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = $1 AND payment_method = 'credit' AND transaction_type = 'expense'), 0)
+            - COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = $1 AND payment_method = 'credit' AND transaction_type = 'income'), 0)
             - COALESCE((SELECT SUM(amount) FROM credit_card_payments WHERE account_id = $1), 0)",
     )
     .bind(account_id)
@@ -122,13 +124,14 @@ pub async fn compute_all_balances(
     let rows: Vec<(i32, Decimal, Decimal)> = sqlx::query_as(
         "SELECT
             a.id,
-            COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND transaction_type = 'income'), 0)
+            COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND transaction_type = 'income' AND payment_method != 'credit'), 0)
             - COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND transaction_type = 'expense' AND payment_method != 'credit'), 0)
             + COALESCE((SELECT SUM(amount) FROM transfers WHERE to_account_id = a.id), 0)
             - COALESCE((SELECT SUM(amount) FROM transfers WHERE from_account_id = a.id), 0)
             - COALESCE((SELECT SUM(amount) FROM credit_card_payments WHERE account_id = a.id), 0),
             CASE WHEN a.has_credit_card THEN
-                COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND payment_method = 'credit'), 0)
+                COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND payment_method = 'credit' AND transaction_type = 'expense'), 0)
+                - COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND payment_method = 'credit' AND transaction_type = 'income'), 0)
                 - COALESCE((SELECT SUM(amount) FROM credit_card_payments WHERE account_id = a.id), 0)
             ELSE 0
             END
@@ -139,4 +142,41 @@ pub async fn compute_all_balances(
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().map(|(id, c, u)| (id, (c, u))).collect())
+}
+
+/// Check if an account is referenced by any transactions, transfers,
+/// credit card payments, installment purchases, or recurring transactions.
+pub async fn has_references(pool: &PgPool, id: i32) -> Result<bool, sqlx::Error> {
+    let row: (bool,) = sqlx::query_as(
+        "SELECT
+            EXISTS(SELECT 1 FROM transactions WHERE account_id = $1)
+            OR EXISTS(SELECT 1 FROM transfers WHERE from_account_id = $1 OR to_account_id = $1)
+            OR EXISTS(SELECT 1 FROM credit_card_payments WHERE account_id = $1)
+            OR EXISTS(SELECT 1 FROM installment_purchases WHERE account_id = $1)
+            OR EXISTS(SELECT 1 FROM recurring_transactions WHERE account_id = $1)",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
+/// Return the set of distinct payment methods used in transactions for an account.
+pub async fn used_payment_methods(pool: &PgPool, account_id: i32) -> Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT payment_method FROM transactions WHERE account_id = $1",
+    )
+    .bind(account_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|(m,)| m).collect())
+}
+
+/// Load (id, name) pairs for ALL accounts (including inactive) for display lookups.
+pub async fn list_all_account_names(pool: &PgPool) -> Result<HashMap<i32, String>, sqlx::Error> {
+    let rows: Vec<(i32, String)> =
+        sqlx::query_as("SELECT id, name FROM accounts ORDER BY id")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows.into_iter().collect())
 }
