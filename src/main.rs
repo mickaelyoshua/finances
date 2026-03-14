@@ -1,7 +1,6 @@
-mod config;
-mod db;
-mod models;
-mod ui;
+use finances::config;
+use finances::db;
+use finances::ui;
 
 use std::time::Duration;
 
