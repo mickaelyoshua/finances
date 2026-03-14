@@ -5,6 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::TableState;
 use rust_decimal::Decimal;
 use sqlx::PgPool;
+use tracing::info;
 
 use crate::{
     models::{
@@ -102,6 +103,12 @@ impl StatusMessage {
     }
 }
 
+/// Central application state — single source of truth for the TUI.
+///
+/// Caches all DB data in memory and refreshes after every mutation via `load_data()`.
+/// Owns form state, table selection state, and popup state for all seven screens.
+/// Passed as `&mut` to both key handlers and render functions because ratatui's
+/// `render_stateful_widget` requires mutable access to `TableState`.
 pub struct App {
     pub running: bool,
     pub screen: Screen,
@@ -999,6 +1006,7 @@ impl App {
                 validated.has_debit_card,
             )
             .await?;
+            info!(id, name = %validated.name, "account updated");
         } else {
             accounts::create_account(
                 &self.pool,
@@ -1011,6 +1019,7 @@ impl App {
                 validated.has_debit_card,
             )
             .await?;
+            info!(name = %validated.name, "account created");
         }
 
         self.account_form = None;
@@ -1021,6 +1030,7 @@ impl App {
 
     async fn execute_deactivate(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::accounts::deactivate_account(&self.pool, id).await?;
+        info!(id, "account deactivated");
         self.load_data().await?;
         clamp_selection(&mut self.account_table_state, self.accounts.len());
         Ok(())
@@ -1063,9 +1073,11 @@ impl App {
                 validated.category_type,
             )
             .await?;
+            info!(id, name = %validated.name, "category updated");
         } else {
             categories::create_category(&self.pool, &validated.name, validated.category_type)
                 .await?;
+            info!(name = %validated.name, "category created");
         }
 
         self.category_form = None;
@@ -1076,6 +1088,7 @@ impl App {
 
     async fn execute_delete_category(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::categories::delete_category(&self.pool, id).await?;
+        info!(id, "category deleted");
         self.load_data().await?;
         clamp_selection(&mut self.category_table_state, self.categories.len());
         Ok(())
@@ -1106,6 +1119,11 @@ impl App {
                     validated.date,
                 )
                 .await?;
+                info!(
+                    desc = %validated.description,
+                    amount = %validated.amount,
+                    "transaction created"
+                );
             }
             TransactionFormMode::Edit(id) => {
                 transactions::update_transaction(
@@ -1120,6 +1138,7 @@ impl App {
                     validated.date,
                 )
                 .await?;
+                info!(id, desc = %validated.description, "transaction updated");
             }
         }
 
@@ -1131,6 +1150,7 @@ impl App {
 
     async fn execute_delete_transaction(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::transactions::delete_transaction(&self.pool, id).await?;
+        info!(id, "transaction deleted");
         self.load_data().await?;
         clamp_selection(&mut self.transaction_table_state, self.transactions.len());
         Ok(())
@@ -1159,6 +1179,7 @@ impl App {
                 _ => unreachable!(),
             };
             budgets::update_budget(&self.pool, id, validated.amount).await?;
+            info!(id, amount = %validated.amount, "budget updated");
         } else {
             match budgets::create_budget(
                 &self.pool,
@@ -1168,7 +1189,13 @@ impl App {
             )
             .await
             {
-                Ok(_) => {}
+                Ok(_) => {
+                    info!(
+                        category_id = validated.category_id,
+                        amount = %validated.amount,
+                        "budget created"
+                    );
+                }
                 Err(e) => {
                     if e.as_database_error()
                         .is_some_and(|db_err| db_err.is_unique_violation())
@@ -1191,6 +1218,7 @@ impl App {
 
     async fn execute_delete_budget(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::budgets::delete_budget(&self.pool, id).await?;
+        info!(id, "budget deleted");
         self.load_data().await?;
         clamp_selection(&mut self.budget_table_state, self.budgets.len());
         Ok(())
@@ -1218,6 +1246,12 @@ impl App {
             validated.first_date,
         )
         .await?;
+        info!(
+            desc = %validated.description,
+            total = %validated.total_amount,
+            count = validated.installment_count,
+            "installment purchase created"
+        );
 
         self.installment_form = None;
         self.input_mode = InputMode::Normal;
@@ -1227,6 +1261,7 @@ impl App {
 
     async fn execute_delete_installment(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::installments::delete_installment_purchase(&self.pool, id).await?;
+        info!(id, "installment purchase deleted (transactions cascaded)");
         self.load_data().await?;
         clamp_selection(&mut self.installment_table_state, self.installments.len());
         Ok(())
@@ -1258,6 +1293,7 @@ impl App {
                     validated.next_due,
                 )
                 .await?;
+                info!(desc = %validated.description, "recurring transaction created");
             }
             RecurringFormMode::Edit(id) => {
                 recurring::update_recurring(
@@ -1273,6 +1309,7 @@ impl App {
                     validated.next_due,
                 )
                 .await?;
+                info!(id, desc = %validated.description, "recurring transaction updated");
             }
         }
 
@@ -1330,6 +1367,12 @@ impl App {
             .await?;
 
         tx.commit().await?;
+        info!(
+            id = r.id,
+            desc = %r.description,
+            next_due = %new_next_due,
+            "recurring transaction confirmed"
+        );
 
         self.load_data().await?;
         self.status_message = Some(StatusMessage::info(format!(
@@ -1342,6 +1385,7 @@ impl App {
 
     async fn execute_deactivate_recurring(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::recurring::deactivate_recurring(&self.pool, id).await?;
+        info!(id, "recurring transaction deactivated");
         self.load_data().await?;
         clamp_selection(&mut self.recurring_table_state, self.recurring_list.len());
         Ok(())
