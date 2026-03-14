@@ -9,6 +9,13 @@ pub enum AppEvent {
     Tick,
 }
 
+/// Bridges crossterm's blocking I/O with tokio's async runtime.
+///
+/// crossterm's `poll()`/`read()` block the calling thread, so they run inside
+/// `spawn_blocking` on a dedicated OS thread. Events are forwarded over an
+/// unbounded mpsc channel; the async side consumes them via `next().await`.
+/// The loop exits (and `next()` returns `None`) when the receiver is dropped
+/// or when crossterm reports an I/O error.
 pub struct EventHandler {
     rx: mpsc::UnboundedReceiver<AppEvent>,
     _task: tokio::task::JoinHandle<()>,
