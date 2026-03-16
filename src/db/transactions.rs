@@ -2,8 +2,12 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
+use tracing::debug;
+
 use crate::models::{PaymentMethod, Transaction, TransactionType};
 
+/// Filter criteria passed from the UI filter bar to the DB query layer.
+/// All fields are optional — `None` means "no constraint" for that dimension.
 #[derive(Default)]
 pub struct TransactionFilterParams {
     pub date_from: Option<NaiveDate>,
@@ -26,7 +30,9 @@ pub async fn list_filtered(
     qb.push(" ORDER BY date DESC, id DESC LIMIT ")
         .push_bind(limit);
     qb.push(" OFFSET ").push_bind(offset);
-    qb.build_query_as::<Transaction>().fetch_all(pool).await
+    let rows = qb.build_query_as::<Transaction>().fetch_all(pool).await?;
+    debug!(count = rows.len(), offset, limit, "list_filtered");
+    Ok(rows)
 }
 
 pub async fn count_filtered(
@@ -39,6 +45,8 @@ pub async fn count_filtered(
     Ok(row.0 as u64)
 }
 
+/// Append optional filter clauses to a query that starts with `WHERE TRUE`.
+/// The `WHERE TRUE` base lets every filter unconditionally use `AND`.
 fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, filters: &TransactionFilterParams) {
     if let Some(d) = filters.date_from {
         qb.push(" AND date >= ").push_bind(d);

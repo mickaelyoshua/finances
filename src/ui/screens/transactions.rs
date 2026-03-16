@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{
     db::transactions::TransactionFilterParams,
@@ -78,6 +78,8 @@ impl FilterField {
     ];
 }
 
+/// State for the transaction filter bar (toggled with 'f').
+/// Selector fields use `Option<usize>` where `None` = "All" (no filter).
 pub struct TransactionFilter {
     pub date_from: InputField,
     pub date_to: InputField,
@@ -168,6 +170,8 @@ impl Default for TransactionFilter {
     }
 }
 
+/// Cycle through `None → Some(0) → … → Some(len-1) → None`.
+/// Used by filter selectors so "All" (None) is reachable by cycling past the last option.
 pub fn cycle_option(current: Option<usize>, len: usize) -> Option<usize> {
     if len == 0 {
         return None;
@@ -192,6 +196,7 @@ pub struct TransactionForm {
     pub error: Option<String>,
 }
 
+#[derive(Debug)]
 pub struct ValidatedTransaction {
     pub date: NaiveDate,
     pub description: String,
@@ -710,6 +715,7 @@ impl App {
                 self.load_transactions().await?;
                 self.transaction_table_state.select(Some(0));
                 self.input_mode = InputMode::Normal;
+                debug!(count = self.transaction_count, "filters applied");
             }
             KeyCode::Tab | KeyCode::Down => {
                 if self.transaction_filter.active_field < FilterField::ALL.len() - 1 {
