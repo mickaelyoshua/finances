@@ -98,6 +98,31 @@ CREATE TABLE recurring_transactions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE notifications (
+    id SERIAL PRIMARY KEY,
+    message TEXT NOT NULL,
+    notification_type VARCHAR(20) NOT NULL
+        CHECK (notification_type IN (
+            'no_transactions',
+            'overdue_recurring',
+            'budget_50',
+            'budget_75',
+            'budget_90',
+            'budget_100',
+            'budget_exceeded'
+        )),
+    reference_id INT,
+    read BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_notifications_unread ON notifications (created_at DESC)
+    WHERE read = FALSE;
+
+CREATE UNIQUE INDEX idx_notifications_dedup
+    ON notifications (notification_type, COALESCE(reference_id, 0))
+    WHERE read = FALSE;
+
 INSERT INTO categories (name, category_type) VALUES
     ('Housing', 'expense'),
     ('Food', 'expense'),

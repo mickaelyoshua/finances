@@ -199,6 +199,14 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled("← →", Style::new().fg(Color::Yellow)),
                 Span::raw(" Navigate"),
             ]);
+            if !app.notifications.is_empty() {
+                spans.push(Span::styled(
+                    format!(" [{} unread]", app.notifications.len()),
+                    Style::new()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
         }
         InputMode::Filtering => {
             spans.extend([

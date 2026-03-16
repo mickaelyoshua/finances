@@ -17,6 +17,7 @@ pub mod budgets;
 pub mod categories;
 pub mod credit_card_payments;
 pub mod installments;
+pub mod notifications;
 pub mod recurring;
 pub mod transactions;
 pub mod transfers;

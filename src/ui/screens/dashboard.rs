@@ -11,15 +11,70 @@ use rust_decimal::prelude::ToPrimitive;
 use crate::ui::{App, components::format::format_brl};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    // Top half: accounts table, bottom half: budgets (left) + recurring (right)
-    let [top, bottom] = Layout::vertical([Constraint::Min(5), Constraint::Min(5)]).areas(area);
+    if app.notifications.is_empty() {
+        // Original 3-section layout
+        let [top, bottom] =
+            Layout::vertical([Constraint::Min(5), Constraint::Min(5)]).areas(area);
+        let [budget_area, recurring_area] =
+            Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
+                .areas(bottom);
 
-    let [budget_area, recurring_area] =
-        Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).areas(bottom);
+        render_balances(frame, top, app);
+        render_budgets(frame, budget_area, app);
+        render_recurring(frame, recurring_area, app);
+    } else {
+        // 4-section layout: notifications at top
+        let notif_height = (app.notifications.len() as u16 + 2).min(10); // +2 for border, cap at 10
+        let [notif_area, top, bottom] = Layout::vertical([
+            Constraint::Length(notif_height),
+            Constraint::Min(5),
+            Constraint::Min(5),
+        ])
+        .areas(area);
+        let [budget_area, recurring_area] =
+            Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
+                .areas(bottom);
 
-    render_balances(frame, top, app);
-    render_budgets(frame, budget_area, app);
-    render_recurring(frame, recurring_area, app);
+        render_notifications(frame, notif_area, app);
+        render_balances(frame, top, app);
+        render_budgets(frame, budget_area, app);
+        render_recurring(frame, recurring_area, app);
+    }
+}
+
+fn render_notifications(frame: &mut Frame, area: Rect, app: &App) {
+    let lines: Vec<Line> = app
+        .notifications
+        .iter()
+        .enumerate()
+        .map(|(i, n)| {
+            let style = if i == app.notification_selection {
+                Style::new()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::new().fg(Color::White)
+            };
+            let marker = if i == app.notification_selection {
+                "▸ "
+            } else {
+                "  "
+            };
+            Line::styled(format!("{}{}", marker, n.message), style)
+        })
+        .collect();
+
+    let title = format!(
+        "Notifications ({} unread) — r: dismiss  R: dismiss all",
+        app.notifications.len()
+    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::new().fg(Color::Yellow));
+    let paragraph = Paragraph::new(lines).block(block);
+
+    frame.render_widget(paragraph, area);
 }
 
 fn render_balances(frame: &mut Frame, area: Rect, app: &App) {

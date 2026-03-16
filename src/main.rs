@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use chrono::Local;
 use clap::Parser;
+use rust_decimal::prelude::ToPrimitive;
 use config::Config;
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
@@ -34,15 +35,123 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if cfg.notify {
+        info!("running notification checks");
         let today = Local::now().date_naive();
+        let mut messages: Vec<String> = Vec::new();
+
+        // 1. No transactions today
         let has_entries = db::transactions::has_transactions_today(&pool, today).await?;
         if !has_entries {
-            info!("no transactions today, sending notification");
+            let msg = "You haven't logged any transactions today!".to_string();
+            db::notifications::insert_if_new(
+                &pool,
+                &msg,
+                finances::models::NotificationType::NoTransactions,
+                None,
+            )
+            .await?;
+            messages.push(msg);
+        }
+
+        // 2. Overdue recurring transactions
+        let pending = db::recurring::list_pending(&pool, today).await?;
+        for r in &pending {
+            let msg = format!(
+                "Overdue: {} — {}",
+                r.description,
+                ui::components::format::format_brl(r.amount),
+            );
+            db::notifications::insert_if_new(
+                &pool,
+                &msg,
+                finances::models::NotificationType::OverdueRecurring,
+                Some(r.id),
+            )
+            .await?;
+            messages.push(msg);
+        }
+
+        // 3. Budget alerts (50%, 75%, 90%, 100%, exceeded)
+        let budgets = db::budgets::list_budgets(&pool).await?;
+        let categories = db::categories::list_categories(&pool).await?;
+        let (weekly_start, _) = finances::models::BudgetPeriod::Weekly.date_range(today);
+        let (monthly_start, _) = finances::models::BudgetPeriod::Monthly.date_range(today);
+        let (yearly_start, _) = finances::models::BudgetPeriod::Yearly.date_range(today);
+        let spent_map = db::budgets::compute_all_spending(
+            &pool,
+            weekly_start,
+            monthly_start,
+            yearly_start,
+            today,
+        )
+        .await?;
+
+        // Ordered ascending so .rev().find() picks the highest crossed threshold per budget
+        let thresholds: &[(u32, finances::models::NotificationType)] = &[
+            (50, finances::models::NotificationType::Budget50),
+            (75, finances::models::NotificationType::Budget75),
+            (90, finances::models::NotificationType::Budget90),
+            (100, finances::models::NotificationType::Budget100),
+        ];
+
+        for b in &budgets {
+            let spent = spent_map.get(&b.id).copied().unwrap_or_default();
+            if b.amount.is_zero() {
+                continue;
+            }
+            let pct = (spent * rust_decimal::Decimal::from(100)) / b.amount;
+            let pct_u32 = pct.to_u32().unwrap_or(0);
+
+            let cat_name = categories
+                .iter()
+                .find(|c| c.id == b.category_id)
+                .map(|c| c.name.as_str())
+                .unwrap_or("?");
+            let period = b.parsed_period().label();
+
+            // Find the highest crossed threshold only
+            if pct_u32 > 100 {
+                let msg = format!(
+                    "Budget '{}' ({}) EXCEEDED — {}/{}",
+                    cat_name,
+                    period,
+                    ui::components::format::format_brl(spent),
+                    ui::components::format::format_brl(b.amount),
+                );
+                db::notifications::insert_if_new(
+                    &pool,
+                    &msg,
+                    finances::models::NotificationType::BudgetExceeded,
+                    Some(b.id),
+                )
+                .await?;
+                messages.push(msg);
+            } else if let Some(&(threshold, ntype)) =
+                thresholds.iter().rev().find(|(t, _)| pct_u32 >= *t)
+            {
+                let msg = format!(
+                    "Budget '{}' ({}) reached {}% — {}/{}",
+                    cat_name,
+                    period,
+                    threshold,
+                    ui::components::format::format_brl(spent),
+                    ui::components::format::format_brl(b.amount),
+                );
+                db::notifications::insert_if_new(&pool, &msg, ntype, Some(b.id)).await?;
+                messages.push(msg);
+            }
+        }
+
+        // Send combined desktop notification
+        if !messages.is_empty() {
+            let body = messages.join("\n");
+            info!(count = messages.len(), "sending notifications");
             notify_rust::Notification::new()
                 .summary("Finances")
-                .body("You haven't logged any transactions today!")
+                .body(&body)
                 .show()?;
         }
+
         return Ok(());
     }
 

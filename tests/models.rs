@@ -95,6 +95,27 @@ fn frequency_invalid_rejected() {
     assert!("hourly".parse::<Frequency>().is_err());
 }
 
+#[test]
+fn notification_type_roundtrip() {
+    for variant in [
+        NotificationType::NoTransactions,
+        NotificationType::OverdueRecurring,
+        NotificationType::Budget50,
+        NotificationType::Budget75,
+        NotificationType::Budget90,
+        NotificationType::Budget100,
+        NotificationType::BudgetExceeded,
+    ] {
+        let parsed: NotificationType = variant.to_string().parse().unwrap();
+        assert_eq!(parsed, variant);
+    }
+}
+
+#[test]
+fn notification_type_invalid_rejected() {
+    assert!("budget_200".parse::<NotificationType>().is_err());
+}
+
 // -- TransactionType → CategoryType mapping --
 
 #[test]

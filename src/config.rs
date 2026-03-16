@@ -7,7 +7,7 @@ pub struct Config {
     #[arg(long)]
     pub migrate: bool,
 
-    /// Send a desktop notification if no transactions were entered today
+    /// Check for alerts (no transactions today, overdue recurring, over-budget) and send a desktop notification
     #[arg(long)]
     pub notify: bool,
 

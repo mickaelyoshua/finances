@@ -8,8 +8,8 @@ use sqlx::PgPool;
 
 use crate::{
     models::{
-        Account, Budget, Category, CreditCardPayment, InstallmentPurchase, RecurringTransaction,
-        Transaction, Transfer,
+        Account, Budget, Category, CreditCardPayment, InstallmentPurchase, Notification,
+        RecurringTransaction, Transaction, Transfer,
     },
     ui::{
         components::popup::ConfirmPopup,
@@ -176,6 +176,9 @@ pub struct App {
     pub cc_payment_table_state: TableState,
     pub cc_payment_form: Option<CcPaymentForm>,
 
+    pub notifications: Vec<Notification>,
+    pub notification_selection: usize,
+
     pub status_message: Option<StatusMessage>,
 }
 
@@ -229,6 +232,9 @@ impl App {
             cc_payment_table_state: TableState::default().with_selected(0),
             cc_payment_form: None,
 
+            notifications: Vec::new(),
+            notification_selection: 0,
+
             status_message: None,
         }
     }
@@ -249,7 +255,7 @@ impl App {
     }
 
     pub async fn load_data(&mut self) -> anyhow::Result<()> {
-        use crate::db::{accounts, budgets, categories, installments, recurring};
+        use crate::db::{accounts, budgets, categories, installments, notifications, recurring};
         use crate::models::BudgetPeriod;
 
         self.accounts = accounts::list_accounts(&self.pool).await?;
@@ -280,6 +286,8 @@ impl App {
         self.transfers = crate::db::transfers::list_transfers(&self.pool, 100, 0).await?;
         self.cc_payments =
             crate::db::credit_card_payments::list_all_payments(&self.pool, 100, 0).await?;
+
+        self.notifications = notifications::list_unread(&self.pool).await?;
 
         Ok(())
     }
@@ -364,7 +372,7 @@ impl App {
             KeyCode::Left => self.screen = self.screen.prev(),
             KeyCode::Right => self.screen = self.screen.next(),
             _ => match self.screen {
-                Screen::Dashboard => {}
+                Screen::Dashboard => self.handle_dashboard_key(key.code).await?,
                 Screen::Accounts => self.handle_accounts_key(key.code).await?,
                 Screen::Categories => self.handle_categories_key(key.code).await?,
                 Screen::Transactions => self.handle_transactions_key(key.code).await?,
@@ -430,6 +438,48 @@ impl App {
             self.handle_transfer_form_key(key.code);
         } else if self.cc_payment_form.is_some() {
             self.handle_cc_payment_form_key(key.code);
+        }
+        Ok(())
+    }
+
+    // ── Dashboard key handlers ────────────────────────────────────────
+
+    async fn handle_dashboard_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        if self.notifications.is_empty() {
+            return Ok(());
+        }
+        match code {
+            KeyCode::Up => {
+                if self.notification_selection > 0 {
+                    self.notification_selection -= 1;
+                }
+            }
+            KeyCode::Down => {
+                let max = self.notifications.len().saturating_sub(1);
+                if self.notification_selection < max {
+                    self.notification_selection += 1;
+                }
+            }
+            KeyCode::Char('r') => {
+                if let Some(n) = self.notifications.get(self.notification_selection) {
+                    let id = n.id;
+                    crate::db::notifications::mark_read(&self.pool, id).await?;
+                    self.load_data().await?;
+                    // Clamp selection after removal
+                    if !self.notifications.is_empty() {
+                        self.notification_selection =
+                            self.notification_selection.min(self.notifications.len() - 1);
+                    } else {
+                        self.notification_selection = 0;
+                    }
+                }
+            }
+            KeyCode::Char('R') => {
+                crate::db::notifications::mark_all_read(&self.pool).await?;
+                self.load_data().await?;
+                self.notification_selection = 0;
+            }
+            _ => {}
         }
         Ok(())
     }
