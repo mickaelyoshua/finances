@@ -1,63 +1,71 @@
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use crate::models::{PaymentMethod, Transaction, TransactionType};
 
-pub async fn list_transactions(
-    pool: &PgPool,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<Transaction>, sqlx::Error> {
-    sqlx::query_as::<_, Transaction>(
-        "SELECT * FROM transactions ORDER BY date DESC, id DESC LIMIT $1 OFFSET $2",
-    )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await
+#[derive(Default)]
+pub struct TransactionFilterParams {
+    pub date_from: Option<NaiveDate>,
+    pub date_to: Option<NaiveDate>,
+    pub account_id: Option<i32>,
+    pub category_id: Option<i32>,
+    pub transaction_type: Option<TransactionType>,
+    pub payment_method: Option<PaymentMethod>,
+    pub description: Option<String>,
 }
 
-pub async fn list_by_date_range(
+pub async fn list_filtered(
     pool: &PgPool,
-    from: NaiveDate,
-    to: NaiveDate,
+    filters: &TransactionFilterParams,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Transaction>, sqlx::Error> {
-    sqlx::query_as::<_, Transaction>(
-        "SELECT * FROM transactions WHERE date BETWEEN $1 AND $2 ORDER BY date DESC, id DESC LIMIT $3 OFFSET $4",
-    )
-    .bind(from)
-    .bind(to)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await
+    let mut qb = QueryBuilder::new("SELECT * FROM transactions WHERE TRUE");
+    push_filters(&mut qb, filters);
+    qb.push(" ORDER BY date DESC, id DESC LIMIT ")
+        .push_bind(limit);
+    qb.push(" OFFSET ").push_bind(offset);
+    qb.build_query_as::<Transaction>().fetch_all(pool).await
 }
 
-pub async fn list_by_account(
+pub async fn count_filtered(
     pool: &PgPool,
-    account_id: i32,
-    from: NaiveDate,
-    to: NaiveDate,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<Transaction>, sqlx::Error> {
-    sqlx::query_as::<_, Transaction>(
-        "SELECT * FROM transactions
-         WHERE account_id = $1 AND date BETWEEN $2 AND $3
-         ORDER BY date DESC, id DESC
-         LIMIT $4 OFFSET $5",
-    )
-    .bind(account_id)
-    .bind(from)
-    .bind(to)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await
+    filters: &TransactionFilterParams,
+) -> Result<u64, sqlx::Error> {
+    let mut qb = QueryBuilder::new("SELECT COUNT(*) FROM transactions WHERE TRUE");
+    push_filters(&mut qb, filters);
+    let row: (i64,) = qb.build_query_as().fetch_one(pool).await?;
+    Ok(row.0 as u64)
 }
+
+fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, filters: &TransactionFilterParams) {
+    if let Some(d) = filters.date_from {
+        qb.push(" AND date >= ").push_bind(d);
+    }
+    if let Some(d) = filters.date_to {
+        qb.push(" AND date <= ").push_bind(d);
+    }
+    if let Some(id) = filters.account_id {
+        qb.push(" AND account_id = ").push_bind(id);
+    }
+    if let Some(id) = filters.category_id {
+        qb.push(" AND category_id = ").push_bind(id);
+    }
+    if let Some(t) = filters.transaction_type {
+        qb.push(" AND transaction_type = ")
+            .push_bind(t.as_str().to_string());
+    }
+    if let Some(m) = filters.payment_method {
+        qb.push(" AND payment_method = ")
+            .push_bind(m.as_str().to_string());
+    }
+    if let Some(ref desc) = filters.description {
+        qb.push(" AND description ILIKE ")
+            .push_bind(format!("%{desc}%"));
+    }
+}
+
 
 pub async fn create_transaction(
     pool: &PgPool,
@@ -124,11 +132,10 @@ pub async fn delete_transaction(pool: &PgPool, id: i32) -> Result<(), sqlx::Erro
 }
 
 pub async fn has_transactions_today(pool: &PgPool, today: NaiveDate) -> Result<bool, sqlx::Error> {
-    let row: (bool,) =
-        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM transactions WHERE date = $1)")
-            .bind(today)
-            .fetch_one(pool)
-            .await?;
+    let row: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM transactions WHERE date = $1)")
+        .bind(today)
+        .fetch_one(pool)
+        .await?;
     Ok(row.0)
 }
 

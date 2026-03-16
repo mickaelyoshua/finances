@@ -297,7 +297,8 @@ async fn list_transactions_ordered_desc() {
         .unwrap();
     }
 
-    let list = transactions::list_transactions(&pool, 10, 0).await.unwrap();
+    let filters = transactions::TransactionFilterParams::default();
+    let list = transactions::list_filtered(&pool, &filters, 10, 0).await.unwrap();
     assert_eq!(list.len(), 3);
     assert_eq!(list[0].date, date(2026, 3, 10)); // most recent first
     assert_eq!(list[2].date, date(2026, 3, 1));
@@ -324,15 +325,14 @@ async fn list_by_date_range_filters() {
         .unwrap();
     }
 
-    let list = transactions::list_by_date_range(
-        &pool,
-        date(2026, 3, 5),
-        date(2026, 3, 10),
-        100,
-        0,
-    )
-    .await
-    .unwrap();
+    let filters = transactions::TransactionFilterParams {
+        date_from: Some(date(2026, 3, 5)),
+        date_to: Some(date(2026, 3, 10)),
+        ..Default::default()
+    };
+    let list = transactions::list_filtered(&pool, &filters, 100, 0)
+        .await
+        .unwrap();
 
     assert_eq!(list.len(), 2);
 }
@@ -398,7 +398,8 @@ async fn delete_transaction_removes_row() {
 
     transactions::delete_transaction(&pool, txn.id).await.unwrap();
 
-    let list = transactions::list_transactions(&pool, 100, 0).await.unwrap();
+    let filters = transactions::TransactionFilterParams::default();
+    let list = transactions::list_filtered(&pool, &filters, 100, 0).await.unwrap();
     assert!(list.is_empty());
 }
 
@@ -785,7 +786,8 @@ async fn delete_installment_cascades_transactions() {
         .await.unwrap();
 
     // All generated transactions should be gone
-    let txns = transactions::list_transactions(&pool, 100, 0).await.unwrap();
+    let filters = transactions::TransactionFilterParams::default();
+    let txns = transactions::list_filtered(&pool, &filters, 100, 0).await.unwrap();
     assert!(txns.is_empty());
 }
 

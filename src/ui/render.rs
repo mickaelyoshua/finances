@@ -200,6 +200,18 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
                 Span::raw(" Navigate"),
             ]);
         }
+        InputMode::Filtering => {
+            spans.extend([
+                Span::styled(" Esc", Style::new().fg(Color::Yellow)),
+                Span::raw(" Close "),
+                Span::styled("Enter", Style::new().fg(Color::Yellow)),
+                Span::raw(" Apply "),
+                Span::styled("Tab/↑↓", Style::new().fg(Color::Yellow)),
+                Span::raw(" Navigate "),
+                Span::styled("Space", Style::new().fg(Color::Yellow)),
+                Span::raw(" Cycle"),
+            ]);
+        }
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);

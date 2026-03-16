@@ -3,14 +3,16 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::Line,
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
 
 use crate::{
+    db::transactions::TransactionFilterParams,
     models::{Account, Category, PaymentMethod, Transaction, TransactionType},
     ui::{
+        app::InputMode,
         App,
         components::{
             format::{format_brl, parse_positive_amount},
@@ -46,6 +48,130 @@ impl TransactionField {
         Self::PaymentMethod,
         Self::Category,
     ];
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterField {
+    DateFrom,
+    DateTo,
+    Description,
+    Account,
+    Category,
+    TransactionType,
+    PaymentMethod,
+}
+
+impl FilterField {
+    pub const ALL: [Self; 7] = [
+        Self::DateFrom,
+        Self::DateTo,
+        Self::Description,
+        Self::Account,
+        Self::Category,
+        Self::TransactionType,
+        Self::PaymentMethod,
+    ];
+}
+
+pub struct TransactionFilter {
+    pub date_from: InputField,
+    pub date_to: InputField,
+    pub description: InputField,
+    pub account_idx: Option<usize>,
+    pub category_idx: Option<usize>,
+    pub transaction_type_idx: Option<usize>,
+    pub payment_method_idx: Option<usize>,
+    pub active_field: usize,
+    pub visible: bool,
+}
+
+impl TransactionFilter {
+    pub fn new() -> Self {
+        Self {
+            date_from: InputField::new("From"),
+            date_to: InputField::new("To"),
+            description: InputField::new("Desc"),
+            account_idx: None,
+            category_idx: None,
+            transaction_type_idx: None,
+            payment_method_idx: None,
+            active_field: 0,
+            visible: false,
+        }
+    }
+
+    pub fn active_field_id(&self) -> FilterField {
+        FilterField::ALL[self.active_field.min(FilterField::ALL.len() - 1)]
+    }
+
+    pub fn to_params(
+        &self,
+        accounts: &[Account],
+        categories: &[Category],
+    ) -> TransactionFilterParams {
+        let date_from = NaiveDate::parse_from_str(self.date_from.value.trim(), "%d-%m-%Y").ok();
+        let date_to = NaiveDate::parse_from_str(self.date_to.value.trim(), "%d-%m-%Y").ok();
+
+        let description = {
+            let d = self.description.value.trim().to_string();
+            if d.is_empty() { None } else { Some(d) }
+        };
+
+        let account_id = self.account_idx.and_then(|i| accounts.get(i)).map(|a| a.id);
+
+        let category_id = self
+            .category_idx
+            .and_then(|i| categories.get(i))
+            .map(|c| c.id);
+
+        let transaction_type = self.transaction_type_idx.map(|i| {
+            if i == 0 {
+                TransactionType::Expense
+            } else {
+                TransactionType::Income
+            }
+        });
+
+        let payment_method = self.payment_method_idx.and_then(|i| {
+            [
+                PaymentMethod::Pix,
+                PaymentMethod::Credit,
+                PaymentMethod::Debit,
+                PaymentMethod::Cash,
+                PaymentMethod::Boleto,
+                PaymentMethod::Transfer,
+            ]
+            .get(i)
+            .copied()
+        });
+
+        TransactionFilterParams {
+            date_from,
+            date_to,
+            account_id,
+            category_id,
+            transaction_type,
+            payment_method,
+            description,
+        }
+    }
+}
+
+impl Default for TransactionFilter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn cycle_option(current: Option<usize>, len: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    match current {
+        None => Some(0),
+        Some(i) if i + 1 < len => Some(i + 1),
+        Some(_) => None,
+    }
 }
 
 pub struct TransactionForm {
@@ -191,8 +317,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
-    let [table_area, detail_area] =
-        Layout::vertical([Constraint::Min(5), Constraint::Length(6)]).areas(area);
+    let filter_height = if app.transaction_filter.visible { 4 } else { 0 };
+
+    let [filter_area, table_area, detail_area] = Layout::vertical([
+        Constraint::Length(filter_height),
+        Constraint::Min(5),
+        Constraint::Length(6),
+    ])
+    .areas(area);
+
+    if app.transaction_filter.visible {
+        render_filter_bar(frame, filter_area, app);
+    }
 
     let header = Row::new(["Date", "Description", "Amount", "Account", "Category"])
         .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
@@ -231,7 +367,13 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         ],
     )
     .header(header)
-    .block(Block::default().borders(Borders::ALL).title("Transactions"))
+    .block(Block::default().borders(Borders::ALL).title(if app.transaction_count > 0 {
+        let start = app.transaction_offset + 1;
+        let end = app.transaction_offset + app.transactions.len() as u64;
+        format!("Transactions ({start}-{end} of {})", app.transaction_count)
+    } else {
+        "Transactions (0)".to_string()
+    }))
     .row_highlight_style(
         Style::new()
             .bg(Color::DarkGray)
@@ -281,6 +423,108 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .title("Transaction Details");
     let detail = Paragraph::new(detail_content).block(detail_block);
     frame.render_widget(detail, detail_area);
+}
+
+fn render_filter_bar(frame: &mut Frame, area: Rect, app: &mut App) {
+    let filter = &app.transaction_filter;
+    let is_filtering = app.input_mode == InputMode::Filtering;
+    let border_color = if is_filtering { Color::Yellow } else { Color::DarkGray };
+
+    // Row 1: DateFrom | DateTo | Description (text inputs)
+    let mut row1: Vec<Span> = Vec::new();
+    for (i, field) in [FilterField::DateFrom, FilterField::DateTo, FilterField::Description]
+        .iter()
+        .enumerate()
+    {
+        let idx = FilterField::ALL.iter().position(|f| f == field).unwrap();
+        let active = is_filtering && filter.active_field == idx;
+        if i > 0 {
+            row1.push(Span::raw(" | "));
+        }
+        let input = match field {
+            FilterField::DateFrom => &filter.date_from,
+            FilterField::DateTo => &filter.date_to,
+            FilterField::Description => &filter.description,
+            _ => unreachable!(),
+        };
+        row1.extend(input.render_inline_spans(active));
+    }
+
+    // Row 2: Account | Category | Type | PaymentMethod (cycling selectors)
+    let mut row2: Vec<Span> = Vec::new();
+    let selector_fields = [
+        FilterField::Account,
+        FilterField::Category,
+        FilterField::TransactionType,
+        FilterField::PaymentMethod,
+    ];
+    for (i, field) in selector_fields.iter().enumerate() {
+        let idx = FilterField::ALL.iter().position(|f| f == field).unwrap();
+        let active = is_filtering && filter.active_field == idx;
+        if i > 0 {
+            row2.push(Span::raw(" | "));
+        }
+        let label_style = if active {
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(Color::DarkGray)
+        };
+
+        let (label, value) = match field {
+            FilterField::Account => (
+                "Acct",
+                filter
+                    .account_idx
+                    .and_then(|i| app.accounts.get(i))
+                    .map(|a| a.name.as_str())
+                    .unwrap_or("All"),
+            ),
+            FilterField::Category => (
+                "Cat",
+                filter
+                    .category_idx
+                    .and_then(|i| app.categories.get(i))
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("All"),
+            ),
+            FilterField::TransactionType => (
+                "Type",
+                match filter.transaction_type_idx {
+                    Some(0) => "Expense",
+                    Some(_) => "Income",
+                    None => "All",
+                },
+            ),
+            FilterField::PaymentMethod => {
+                const LABELS: [&str; 6] =
+                    ["PIX", "Credit Card", "Debit Card", "Cash", "Boleto", "Transfer"];
+                (
+                    "Pay",
+                    filter
+                        .payment_method_idx
+                        .and_then(|i| LABELS.get(i).copied())
+                        .unwrap_or("All"),
+                )
+            }
+            _ => unreachable!(),
+        };
+
+        row2.push(Span::styled(format!("{label}: "), label_style));
+        let value_style = if active {
+            Style::new().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        row2.push(Span::styled(value, value_style));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Filter (Enter=apply, Esc=close, r=reset)")
+        .border_style(Style::new().fg(border_color));
+
+    let lines = vec![Line::from(row1), Line::from(row2)];
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -344,4 +588,3 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::default().borders(Borders::ALL).title(title);
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
-

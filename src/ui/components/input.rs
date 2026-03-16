@@ -107,4 +107,37 @@ impl InputField {
 
         Line::from(value_display)
     }
+
+    pub fn render_inline_spans(&self, active: bool) -> Vec<Span<'_>> {
+        let label_style = if active {
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(Color::DarkGray)
+        };
+
+        if active {
+            let byte_pos = self.byte_offset(self.cursor);
+            let (before, after) = self.value.split_at(byte_pos);
+            let cursor_char = after.chars().next().unwrap_or(' ');
+            let rest = if after.len() > cursor_char.len_utf8() {
+                &after[cursor_char.len_utf8()..]
+            } else {
+                ""
+            };
+            vec![
+                Span::styled(format!("{}: ", self.label), label_style),
+                Span::raw(before),
+                Span::styled(
+                    cursor_char.to_string(),
+                    Style::new().bg(Color::White).fg(Color::Black),
+                ),
+                Span::raw(rest),
+            ]
+        } else {
+            vec![
+                Span::styled(format!("{}: ", self.label), label_style),
+                Span::raw(self.value.as_str()),
+            ]
+        }
+    }
 }

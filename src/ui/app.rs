@@ -10,7 +10,7 @@ use tracing::info;
 use crate::{
     models::{
         Account, AccountType, Budget, Category, CategoryType, CreditCardPayment,
-        InstallmentPurchase, RecurringTransaction, Transaction, Transfer, TransactionType,
+        InstallmentPurchase, RecurringTransaction, Transaction, TransactionType, Transfer,
     },
     ui::{
         components::popup::ConfirmPopup,
@@ -20,8 +20,11 @@ use crate::{
             categories::{CategoryField, CategoryForm, CategoryFormMode},
             cc_payments::{CcPaymentField, CcPaymentForm},
             installments::{InstallmentField, InstallmentForm},
-            recurring::{RecurringField, RecurringForm, RecurringFormMode, FREQUENCIES},
-            transactions::{TransactionField, TransactionForm, TransactionFormMode},
+            recurring::{FREQUENCIES, RecurringField, RecurringForm, RecurringFormMode},
+            transactions::{
+                FilterField, TransactionField, TransactionFilter, TransactionForm,
+                TransactionFormMode, cycle_option,
+            },
             transfers::{TransferField, TransferForm},
         },
     },
@@ -86,6 +89,7 @@ impl Screen {
 pub enum InputMode {
     Normal,
     Editing,
+    Filtering,
 }
 
 pub enum ConfirmAction {
@@ -106,12 +110,20 @@ pub struct StatusMessage {
 
 impl StatusMessage {
     pub fn error(text: impl Into<String>) -> Self {
-        Self { text: text.into(), is_error: true }
+        Self {
+            text: text.into(),
+            is_error: true,
+        }
     }
     pub fn info(text: impl Into<String>) -> Self {
-        Self { text: text.into(), is_error: false }
+        Self {
+            text: text.into(),
+            is_error: false,
+        }
     }
 }
+
+const PAGE_SIZE: u64 = 100;
 
 /// Central application state — single source of truth for the TUI.
 ///
@@ -127,34 +139,46 @@ pub struct App {
     pub accounts: Vec<Account>,
     pub categories: Vec<Category>,
     pub balances: HashMap<i32, (Decimal, Decimal)>, // account_id -> (checking, credit_used)
-    pub account_names: HashMap<i32, String>,         // all accounts (incl. inactive) for lookups
+    pub account_names: HashMap<i32, String>,        // all accounts (incl. inactive) for lookups
     pub budgets: Vec<Budget>,
     pub budget_spent: HashMap<i32, Decimal>, // budget_id -> spent in current period
-    pub pending_recurring: Vec<RecurringTransaction>,
+    pub budget_table_state: TableState,
+    pub budget_form: Option<BudgetForm>,
+
     pub account_table_state: TableState,
-    pub input_mode: InputMode,
     pub account_form: Option<AccountForm>,
+
+    pub input_mode: InputMode,
     pub confirm_popup: Option<ConfirmPopup>,
     pub confirm_action: Option<ConfirmAction>,
+
     pub category_table_state: TableState,
     pub category_form: Option<CategoryForm>,
+
     pub transactions: Vec<Transaction>,
     pub transaction_table_state: TableState,
     pub transaction_form: Option<TransactionForm>,
-    pub budget_table_state: TableState,
-    pub budget_form: Option<BudgetForm>,
+    pub transaction_offset: u64,
+    pub transaction_count: u64,
+    pub transaction_filter: TransactionFilter,
+
     pub installments: Vec<InstallmentPurchase>,
     pub installment_table_state: TableState,
     pub installment_form: Option<InstallmentForm>,
+
+    pub pending_recurring: Vec<RecurringTransaction>,
     pub recurring_list: Vec<RecurringTransaction>,
     pub recurring_table_state: TableState,
     pub recurring_form: Option<RecurringForm>,
+
     pub transfers: Vec<Transfer>,
     pub transfer_table_state: TableState,
     pub transfer_form: Option<TransferForm>,
+
     pub cc_payments: Vec<CreditCardPayment>,
     pub cc_payment_table_state: TableState,
     pub cc_payment_form: Option<CcPaymentForm>,
+
     pub status_message: Option<StatusMessage>,
 }
 
@@ -171,31 +195,43 @@ impl App {
             account_names: HashMap::new(),
             budgets: Vec::new(),
             budget_spent: HashMap::new(),
-            pending_recurring: Vec::new(),
+            budget_table_state: TableState::default().with_selected(0),
+            budget_form: None,
+
             account_table_state: TableState::default().with_selected(0),
-            input_mode: InputMode::Normal,
             account_form: None,
+
+            input_mode: InputMode::Normal,
             confirm_popup: None,
             confirm_action: None,
+
             category_table_state: TableState::default().with_selected(0),
             category_form: None,
+
             transactions: Vec::new(),
             transaction_table_state: TableState::default().with_selected(0),
             transaction_form: None,
-            budget_table_state: TableState::default().with_selected(0),
-            budget_form: None,
+            transaction_offset: 0,
+            transaction_count: 0,
+            transaction_filter: TransactionFilter::new(),
+
             installments: Vec::new(),
             installment_table_state: TableState::default().with_selected(0),
             installment_form: None,
+
+            pending_recurring: Vec::new(),
             recurring_list: Vec::new(),
             recurring_table_state: TableState::default().with_selected(0),
             recurring_form: None,
+
             transfers: Vec::new(),
             transfer_table_state: TableState::default().with_selected(0),
             transfer_form: None,
+
             cc_payments: Vec::new(),
             cc_payment_table_state: TableState::default().with_selected(0),
             cc_payment_form: None,
+
             status_message: None,
         }
     }
@@ -216,7 +252,7 @@ impl App {
     }
 
     pub async fn load_data(&mut self) -> anyhow::Result<()> {
-        use crate::db::{accounts, budgets, categories, installments, recurring, transactions};
+        use crate::db::{accounts, budgets, categories, installments, recurring};
         use crate::models::BudgetPeriod;
 
         self.accounts = accounts::list_accounts(&self.pool).await?;
@@ -241,13 +277,30 @@ impl App {
 
         self.pending_recurring = recurring::list_pending(&self.pool, today).await?;
         self.recurring_list = recurring::list_recurring(&self.pool).await?;
-        self.transactions = transactions::list_transactions(&self.pool, 100, 0).await?;
+        self.load_transactions().await?;
+
         self.installments = installments::list_installment_purchases(&self.pool).await?;
-        self.transfers =
-            crate::db::transfers::list_transfers(&self.pool, 100, 0).await?;
+        self.transfers = crate::db::transfers::list_transfers(&self.pool, 100, 0).await?;
         self.cc_payments =
             crate::db::credit_card_payments::list_all_payments(&self.pool, 100, 0).await?;
 
+        Ok(())
+    }
+
+    pub async fn load_transactions(&mut self) -> anyhow::Result<()> {
+        use crate::db::transactions;
+
+        let params = self
+            .transaction_filter
+            .to_params(&self.accounts, &self.categories);
+        self.transactions = transactions::list_filtered(
+            &self.pool,
+            &params,
+            PAGE_SIZE as i64,
+            self.transaction_offset as i64,
+        )
+        .await?;
+        self.transaction_count = transactions::count_filtered(&self.pool, &params).await?;
         Ok(())
     }
 
@@ -296,6 +349,7 @@ impl App {
         match self.input_mode {
             InputMode::Normal => self.handle_normal_key(key).await,
             InputMode::Editing => self.handle_editing_key(key).await,
+            InputMode::Filtering => self.handle_filtering_key(key).await,
         }
     }
 
@@ -378,18 +432,10 @@ impl App {
     async fn handle_categories_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
         match code {
             KeyCode::Up => {
-                move_table_selection(
-                    &mut self.category_table_state,
-                    self.categories.len(),
-                    -1,
-                );
+                move_table_selection(&mut self.category_table_state, self.categories.len(), -1);
             }
             KeyCode::Down => {
-                move_table_selection(
-                    &mut self.category_table_state,
-                    self.categories.len(),
-                    1,
-                );
+                move_table_selection(&mut self.category_table_state, self.categories.len(), 1);
             }
             KeyCode::Char('n') => {
                 self.category_form = Some(CategoryForm::new_create());
@@ -414,8 +460,9 @@ impl App {
                     let cat_id = cat.id;
                     let cat_name = cat.name.clone();
                     if crate::db::categories::has_references(&self.pool, cat_id).await? {
-                        self.status_message =
-                            Some(StatusMessage::error(format!("Cannot delete \"{cat_name}\": category is in use")));
+                        self.status_message = Some(StatusMessage::error(format!(
+                            "Cannot delete \"{cat_name}\": category is in use"
+                        )));
                     } else {
                         self.confirm_action = Some(ConfirmAction::DeleteCategory(cat_id));
                         self.confirm_popup =
@@ -494,6 +541,33 @@ impl App {
                     }
                 }
             }
+            KeyCode::Char('f') => {
+                self.transaction_filter.visible = true;
+                self.transaction_filter.active_field = 0;
+                self.input_mode = InputMode::Filtering;
+            }
+            KeyCode::Char('r') => {
+                self.transaction_filter = TransactionFilter::new();
+                self.transaction_offset = 0;
+                self.load_transactions().await?;
+                self.transaction_table_state.select(Some(0));
+            }
+            KeyCode::PageUp => {
+                if self.transaction_offset > 0 {
+                    self.transaction_offset =
+                        self.transaction_offset.saturating_sub(PAGE_SIZE);
+                    self.load_transactions().await?;
+                    self.transaction_table_state.select(Some(0));
+                }
+            }
+            KeyCode::PageDown => {
+                let next = self.transaction_offset + PAGE_SIZE;
+                if next < self.transaction_count {
+                    self.transaction_offset = next;
+                    self.load_transactions().await?;
+                    self.transaction_table_state.select(Some(0));
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -513,7 +587,8 @@ impl App {
                     .iter()
                     .any(|c| c.parsed_type() == CategoryType::Expense);
                 if !has_expense_cat {
-                    self.status_message = Some(StatusMessage::error("Create an expense category first"));
+                    self.status_message =
+                        Some(StatusMessage::error("Create an expense category first"));
                 } else {
                     self.budget_form = Some(BudgetForm::new_create());
                     self.input_mode = InputMode::Editing;
@@ -572,10 +647,12 @@ impl App {
                     .iter()
                     .any(|c| c.parsed_type() == CategoryType::Expense);
                 if !has_credit_account {
-                    self.status_message =
-                        Some(StatusMessage::error("No account with credit card available"));
+                    self.status_message = Some(StatusMessage::error(
+                        "No account with credit card available",
+                    ));
                 } else if !has_expense_cat {
-                    self.status_message = Some(StatusMessage::error("Create an expense category first"));
+                    self.status_message =
+                        Some(StatusMessage::error("Create an expense category first"));
                 } else {
                     self.installment_form = Some(InstallmentForm::new_create());
                     self.input_mode = InputMode::Editing;
@@ -651,10 +728,8 @@ impl App {
                     let r_id = r.id;
                     let r_desc = r.description.clone();
                     self.confirm_action = Some(ConfirmAction::DeactivateRecurring(r_id));
-                    self.confirm_popup = Some(ConfirmPopup::new(format!(
-                        "Deactivate \"{}\"?",
-                        r_desc
-                    )));
+                    self.confirm_popup =
+                        Some(ConfirmPopup::new(format!("Deactivate \"{}\"?", r_desc)));
                 }
             }
             KeyCode::Char('c') => {
@@ -717,6 +792,68 @@ impl App {
             self.handle_transfer_form_key(key.code);
         } else if self.cc_payment_form.is_some() {
             self.handle_cc_payment_form_key(key.code);
+        }
+        Ok(())
+    }
+
+    async fn handle_filtering_key(&mut self, key: KeyEvent) -> anyhow::Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Enter => {
+                self.transaction_offset = 0;
+                self.load_transactions().await?;
+                self.transaction_table_state.select(Some(0));
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Tab | KeyCode::Down => {
+                if self.transaction_filter.active_field < FilterField::ALL.len() - 1 {
+                    self.transaction_filter.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if self.transaction_filter.active_field > 0 {
+                    self.transaction_filter.active_field -= 1;
+                }
+            }
+            _ => match self.transaction_filter.active_field_id() {
+                FilterField::DateFrom => {
+                    self.transaction_filter.date_from.handle_key(key.code);
+                }
+                FilterField::DateTo => {
+                    self.transaction_filter.date_to.handle_key(key.code);
+                }
+                FilterField::Description => {
+                    self.transaction_filter.description.handle_key(key.code);
+                }
+                FilterField::Account => {
+                    if is_toggle_key(key.code) {
+                        let len = self.accounts.len();
+                        self.transaction_filter.account_idx =
+                            cycle_option(self.transaction_filter.account_idx, len);
+                    }
+                }
+                FilterField::Category => {
+                    if is_toggle_key(key.code) {
+                        let len = self.categories.len();
+                        self.transaction_filter.category_idx =
+                            cycle_option(self.transaction_filter.category_idx, len);
+                    }
+                }
+                FilterField::TransactionType => {
+                    if is_toggle_key(key.code) {
+                        self.transaction_filter.transaction_type_idx =
+                            cycle_option(self.transaction_filter.transaction_type_idx, 2);
+                    }
+                }
+                FilterField::PaymentMethod => {
+                    if is_toggle_key(key.code) {
+                        self.transaction_filter.payment_method_idx =
+                            cycle_option(self.transaction_filter.payment_method_idx, 6);
+                    }
+                }
+            },
         }
         Ok(())
     }
@@ -1006,8 +1143,9 @@ impl App {
             }
             KeyCode::Char('n') => {
                 if self.accounts.len() < 2 {
-                    self.status_message =
-                        Some(StatusMessage::error("Need at least 2 accounts for a transfer"));
+                    self.status_message = Some(StatusMessage::error(
+                        "Need at least 2 accounts for a transfer",
+                    ));
                 } else {
                     self.transfer_form = Some(TransferForm::new_create());
                     self.input_mode = InputMode::Editing;
@@ -1022,8 +1160,10 @@ impl App {
                     let t_id = t.id;
                     let t_desc = t.description.clone();
                     self.confirm_action = Some(ConfirmAction::DeleteTransfer(t_id));
-                    self.confirm_popup =
-                        Some(ConfirmPopup::new(format!("Delete transfer \"{}\"?", t_desc)));
+                    self.confirm_popup = Some(ConfirmPopup::new(format!(
+                        "Delete transfer \"{}\"?",
+                        t_desc
+                    )));
                 }
             }
             _ => {}
@@ -1108,24 +1248,17 @@ impl App {
     async fn handle_cc_payments_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
         match code {
             KeyCode::Up => {
-                move_table_selection(
-                    &mut self.cc_payment_table_state,
-                    self.cc_payments.len(),
-                    -1,
-                );
+                move_table_selection(&mut self.cc_payment_table_state, self.cc_payments.len(), -1);
             }
             KeyCode::Down => {
-                move_table_selection(
-                    &mut self.cc_payment_table_state,
-                    self.cc_payments.len(),
-                    1,
-                );
+                move_table_selection(&mut self.cc_payment_table_state, self.cc_payments.len(), 1);
             }
             KeyCode::Char('n') => {
                 let has_cc = self.accounts.iter().any(|a| a.has_credit_card);
                 if !has_cc {
-                    self.status_message =
-                        Some(StatusMessage::error("No account with credit card available"));
+                    self.status_message = Some(StatusMessage::error(
+                        "No account with credit card available",
+                    ));
                 } else {
                     self.cc_payment_form = Some(CcPaymentForm::new_create());
                     self.input_mode = InputMode::Editing;
@@ -1252,13 +1385,15 @@ impl App {
                         return Ok(());
                     }
                     if credit_removed && used.iter().any(|m| m == "credit") {
-                        self.account_form.as_mut().unwrap().error =
-                            Some("Cannot disable credit card: account has credit transactions".into());
+                        self.account_form.as_mut().unwrap().error = Some(
+                            "Cannot disable credit card: account has credit transactions".into(),
+                        );
                         return Ok(());
                     }
                     if debit_removed && used.iter().any(|m| m == "debit") {
-                        self.account_form.as_mut().unwrap().error =
-                            Some("Cannot disable debit card: account has debit transactions".into());
+                        self.account_form.as_mut().unwrap().error = Some(
+                            "Cannot disable debit card: account has debit transactions".into(),
+                        );
                         return Ok(());
                     }
                 }
@@ -1330,19 +1465,16 @@ impl App {
                 if old.parsed_type() != validated.category_type
                     && categories::has_references(&self.pool, id).await?
                 {
-                    self.category_form.as_mut().unwrap().error =
-                        Some("Cannot change type: category is referenced by transactions or budgets".into());
+                    self.category_form.as_mut().unwrap().error = Some(
+                        "Cannot change type: category is referenced by transactions or budgets"
+                            .into(),
+                    );
                     return Ok(());
                 }
             }
 
-            categories::update_category(
-                &self.pool,
-                id,
-                &validated.name,
-                validated.category_type,
-            )
-            .await?;
+            categories::update_category(&self.pool, id, &validated.name, validated.category_type)
+                .await?;
             info!(id, name = %validated.name, "category updated");
         } else {
             categories::create_category(&self.pool, &validated.name, validated.category_type)
@@ -1470,9 +1602,8 @@ impl App {
                     if e.as_database_error()
                         .is_some_and(|db_err| db_err.is_unique_violation())
                     {
-                        self.budget_form.as_mut().unwrap().error = Some(
-                            "A budget for this category and period already exists".into(),
-                        );
+                        self.budget_form.as_mut().unwrap().error =
+                            Some("A budget for this category and period already exists".into());
                         return Ok(());
                     }
                     return Err(e.into());
