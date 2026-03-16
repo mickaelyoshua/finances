@@ -11,6 +11,22 @@ use sqlx::PgPool;
 
 use crate::models::CreditCardPayment;
 
+pub async fn list_all_payments(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<CreditCardPayment>, sqlx::Error> {
+    sqlx::query_as::<_, CreditCardPayment>(
+        "SELECT * FROM credit_card_payments
+         ORDER BY date DESC, id DESC
+         LIMIT $1 OFFSET $2",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn list_by_account(
     pool: &PgPool,
     account_id: i32,

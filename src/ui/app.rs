@@ -9,8 +9,8 @@ use tracing::info;
 
 use crate::{
     models::{
-        Account, AccountType, Budget, Category, CategoryType, InstallmentPurchase,
-        RecurringTransaction, Transaction, TransactionType,
+        Account, AccountType, Budget, Category, CategoryType, CreditCardPayment,
+        InstallmentPurchase, RecurringTransaction, Transaction, Transfer, TransactionType,
     },
     ui::{
         components::popup::ConfirmPopup,
@@ -18,9 +18,11 @@ use crate::{
             accounts::{AccountField, AccountForm, AccountFormMode},
             budgets::{BudgetField, BudgetForm, BudgetFormMode, PERIODS},
             categories::{CategoryField, CategoryForm, CategoryFormMode},
+            cc_payments::{CcPaymentField, CcPaymentForm},
             installments::{InstallmentField, InstallmentForm},
             recurring::{RecurringField, RecurringForm, RecurringFormMode, FREQUENCIES},
             transactions::{TransactionField, TransactionForm, TransactionFormMode},
+            transfers::{TransferField, TransferForm},
         },
     },
 };
@@ -34,10 +36,12 @@ pub enum Screen {
     Categories,
     Installments,
     Recurring,
+    Transfers,
+    CreditCardPayments,
 }
 
 impl Screen {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Dashboard,
         Self::Transactions,
         Self::Accounts,
@@ -45,6 +49,8 @@ impl Screen {
         Self::Categories,
         Self::Installments,
         Self::Recurring,
+        Self::Transfers,
+        Self::CreditCardPayments,
     ];
 
     pub fn label(self) -> &'static str {
@@ -56,6 +62,8 @@ impl Screen {
             Self::Categories => "Categories",
             Self::Installments => "Installments",
             Self::Recurring => "Recurring",
+            Self::Transfers => "Transfers",
+            Self::CreditCardPayments => "Credit Card Payments",
         }
     }
 
@@ -87,6 +95,8 @@ pub enum ConfirmAction {
     DeleteBudget(i32),
     DeleteInstallment(i32),
     DeactivateRecurring(i32),
+    DeleteTransfer(i32),
+    DeleteCreditCardPayment(i32),
 }
 
 pub struct StatusMessage {
@@ -113,6 +123,7 @@ pub struct App {
     pub running: bool,
     pub screen: Screen,
     pub pool: PgPool,
+    pub is_prod: bool,
     pub accounts: Vec<Account>,
     pub categories: Vec<Category>,
     pub balances: HashMap<i32, (Decimal, Decimal)>, // account_id -> (checking, credit_used)
@@ -138,15 +149,22 @@ pub struct App {
     pub recurring_list: Vec<RecurringTransaction>,
     pub recurring_table_state: TableState,
     pub recurring_form: Option<RecurringForm>,
+    pub transfers: Vec<Transfer>,
+    pub transfer_table_state: TableState,
+    pub transfer_form: Option<TransferForm>,
+    pub cc_payments: Vec<CreditCardPayment>,
+    pub cc_payment_table_state: TableState,
+    pub cc_payment_form: Option<CcPaymentForm>,
     pub status_message: Option<StatusMessage>,
 }
 
 impl App {
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: PgPool, is_prod: bool) -> Self {
         Self {
             running: true,
             screen: Screen::Dashboard,
             pool,
+            is_prod,
             accounts: Vec::new(),
             categories: Vec::new(),
             balances: HashMap::new(),
@@ -172,6 +190,12 @@ impl App {
             recurring_list: Vec::new(),
             recurring_table_state: TableState::default().with_selected(0),
             recurring_form: None,
+            transfers: Vec::new(),
+            transfer_table_state: TableState::default().with_selected(0),
+            transfer_form: None,
+            cc_payments: Vec::new(),
+            cc_payment_table_state: TableState::default().with_selected(0),
+            cc_payment_form: None,
             status_message: None,
         }
     }
@@ -219,6 +243,10 @@ impl App {
         self.recurring_list = recurring::list_recurring(&self.pool).await?;
         self.transactions = transactions::list_transactions(&self.pool, 100, 0).await?;
         self.installments = installments::list_installment_purchases(&self.pool).await?;
+        self.transfers =
+            crate::db::transfers::list_transfers(&self.pool, 100, 0).await?;
+        self.cc_payments =
+            crate::db::credit_card_payments::list_all_payments(&self.pool, 100, 0).await?;
 
         Ok(())
     }
@@ -250,6 +278,12 @@ impl App {
                         Some(ConfirmAction::DeactivateRecurring(id)) => {
                             self.execute_deactivate_recurring(id).await?;
                         }
+                        Some(ConfirmAction::DeleteTransfer(id)) => {
+                            self.execute_delete_transfer(id).await?;
+                        }
+                        Some(ConfirmAction::DeleteCreditCardPayment(id)) => {
+                            self.execute_delete_cc_payment(id).await?;
+                        }
                         None => {}
                     }
                 }
@@ -270,20 +304,24 @@ impl App {
     async fn handle_normal_key(&mut self, key: KeyEvent) -> anyhow::Result<()> {
         match key.code {
             KeyCode::Char('q') => self.running = false,
-            KeyCode::Char(c @ '1'..='7') => {
+            KeyCode::Char(c @ '1'..='9') => {
                 let i = (c as usize) - ('1' as usize);
-                self.screen = Screen::ALL[i];
+                if let Some(&screen) = Screen::ALL.get(i) {
+                    self.screen = screen;
+                }
             }
             KeyCode::Left => self.screen = self.screen.prev(),
             KeyCode::Right => self.screen = self.screen.next(),
             _ => match self.screen {
+                Screen::Dashboard => {}
                 Screen::Accounts => self.handle_accounts_key(key.code).await?,
                 Screen::Categories => self.handle_categories_key(key.code).await?,
                 Screen::Transactions => self.handle_transactions_key(key.code).await?,
                 Screen::Budgets => self.handle_budgets_key(key.code).await?,
                 Screen::Installments => self.handle_installments_key(key.code).await?,
                 Screen::Recurring => self.handle_recurring_key(key.code).await?,
-                _ => {}
+                Screen::Transfers => self.handle_transfers_key(key.code).await?,
+                Screen::CreditCardPayments => self.handle_cc_payments_key(key.code).await?,
             },
         }
         Ok(())
@@ -637,6 +675,8 @@ impl App {
             self.budget_form = None;
             self.installment_form = None;
             self.recurring_form = None;
+            self.transfer_form = None;
+            self.cc_payment_form = None;
             self.input_mode = InputMode::Normal;
             return Ok(());
         }
@@ -653,6 +693,10 @@ impl App {
                 self.submit_installment_form().await?;
             } else if self.recurring_form.is_some() {
                 self.submit_recurring_form().await?;
+            } else if self.transfer_form.is_some() {
+                self.submit_transfer_form().await?;
+            } else if self.cc_payment_form.is_some() {
+                self.submit_cc_payment_form().await?;
             }
             return Ok(());
         }
@@ -669,6 +713,10 @@ impl App {
             self.handle_installment_form_key(key.code);
         } else if self.recurring_form.is_some() {
             self.handle_recurring_form_key(key.code);
+        } else if self.transfer_form.is_some() {
+            self.handle_transfer_form_key(key.code);
+        } else if self.cc_payment_form.is_some() {
+            self.handle_cc_payment_form_key(key.code);
         }
         Ok(())
     }
@@ -944,6 +992,228 @@ impl App {
                 }
             },
         }
+    }
+
+    // ── Transfers ──────────────────────────────────────────────────────
+
+    async fn handle_transfers_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        match code {
+            KeyCode::Up => {
+                move_table_selection(&mut self.transfer_table_state, self.transfers.len(), -1);
+            }
+            KeyCode::Down => {
+                move_table_selection(&mut self.transfer_table_state, self.transfers.len(), 1);
+            }
+            KeyCode::Char('n') => {
+                if self.accounts.len() < 2 {
+                    self.status_message =
+                        Some(StatusMessage::error("Need at least 2 accounts for a transfer"));
+                } else {
+                    self.transfer_form = Some(TransferForm::new_create());
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(t) = self
+                    .transfer_table_state
+                    .selected()
+                    .and_then(|i| self.transfers.get(i))
+                {
+                    let t_id = t.id;
+                    let t_desc = t.description.clone();
+                    self.confirm_action = Some(ConfirmAction::DeleteTransfer(t_id));
+                    self.confirm_popup =
+                        Some(ConfirmPopup::new(format!("Delete transfer \"{}\"?", t_desc)));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_transfer_form_key(&mut self, code: KeyCode) {
+        let form = self.transfer_form.as_mut().unwrap();
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                if form.active_field < TransferField::ALL.len() - 1 {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                TransferField::Date => form.date.handle_key(code),
+                TransferField::FromAccount => {
+                    if is_toggle_key(code) {
+                        cycle_index(&mut form.from_account_idx, self.accounts.len(), code);
+                    }
+                }
+                TransferField::ToAccount => {
+                    if is_toggle_key(code) {
+                        cycle_index(&mut form.to_account_idx, self.accounts.len(), code);
+                    }
+                }
+                TransferField::Amount => form.amount.handle_key(code),
+                TransferField::Description => form.description.handle_key(code),
+            },
+        }
+    }
+
+    async fn submit_transfer_form(&mut self) -> anyhow::Result<()> {
+        use crate::db::transfers;
+
+        let form = self.transfer_form.as_ref().unwrap();
+        let validated = match form.validate(&self.accounts) {
+            Ok(v) => v,
+            Err(e) => {
+                self.transfer_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
+            }
+        };
+
+        transfers::create_transfer(
+            &self.pool,
+            validated.from_account_id,
+            validated.to_account_id,
+            validated.amount,
+            &validated.description,
+            validated.date,
+        )
+        .await?;
+        info!(
+            desc = %validated.description,
+            amount = %validated.amount,
+            "transfer created"
+        );
+
+        self.transfer_form = None;
+        self.input_mode = InputMode::Normal;
+        self.load_data().await?;
+        Ok(())
+    }
+
+    async fn execute_delete_transfer(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::transfers::delete_transfer(&self.pool, id).await?;
+        info!(id, "transfer deleted");
+        self.load_data().await?;
+        clamp_selection(&mut self.transfer_table_state, self.transfers.len());
+        Ok(())
+    }
+
+    // ── Credit Card Payments ─────────────────────────────────────────
+
+    async fn handle_cc_payments_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        match code {
+            KeyCode::Up => {
+                move_table_selection(
+                    &mut self.cc_payment_table_state,
+                    self.cc_payments.len(),
+                    -1,
+                );
+            }
+            KeyCode::Down => {
+                move_table_selection(
+                    &mut self.cc_payment_table_state,
+                    self.cc_payments.len(),
+                    1,
+                );
+            }
+            KeyCode::Char('n') => {
+                let has_cc = self.accounts.iter().any(|a| a.has_credit_card);
+                if !has_cc {
+                    self.status_message =
+                        Some(StatusMessage::error("No account with credit card available"));
+                } else {
+                    self.cc_payment_form = Some(CcPaymentForm::new_create());
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(p) = self
+                    .cc_payment_table_state
+                    .selected()
+                    .and_then(|i| self.cc_payments.get(i))
+                {
+                    let p_id = p.id;
+                    let p_desc = p.description.clone();
+                    self.confirm_action = Some(ConfirmAction::DeleteCreditCardPayment(p_id));
+                    self.confirm_popup =
+                        Some(ConfirmPopup::new(format!("Delete payment \"{}\"?", p_desc)));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_cc_payment_form_key(&mut self, code: KeyCode) {
+        let form = self.cc_payment_form.as_mut().unwrap();
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                if form.active_field < CcPaymentField::ALL.len() - 1 {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                CcPaymentField::Date => form.date.handle_key(code),
+                CcPaymentField::Account => {
+                    if is_toggle_key(code) {
+                        let len = self.accounts.iter().filter(|a| a.has_credit_card).count();
+                        cycle_index(&mut form.account_idx, len, code);
+                    }
+                }
+                CcPaymentField::Amount => form.amount.handle_key(code),
+                CcPaymentField::Description => form.description.handle_key(code),
+            },
+        }
+    }
+
+    async fn submit_cc_payment_form(&mut self) -> anyhow::Result<()> {
+        use crate::db::credit_card_payments;
+
+        let form = self.cc_payment_form.as_ref().unwrap();
+        let validated = match form.validate(&self.accounts) {
+            Ok(v) => v,
+            Err(e) => {
+                self.cc_payment_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
+            }
+        };
+
+        credit_card_payments::create_payment(
+            &self.pool,
+            validated.account_id,
+            validated.amount,
+            validated.date,
+            &validated.description,
+        )
+        .await?;
+        info!(
+            desc = %validated.description,
+            amount = %validated.amount,
+            "credit card payment created"
+        );
+
+        self.cc_payment_form = None;
+        self.input_mode = InputMode::Normal;
+        self.load_data().await?;
+        Ok(())
+    }
+
+    async fn execute_delete_cc_payment(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::credit_card_payments::delete_payment(&self.pool, id).await?;
+        info!(id, "credit card payment deleted");
+        self.load_data().await?;
+        clamp_selection(&mut self.cc_payment_table_state, self.cc_payments.len());
+        Ok(())
     }
 
     // ── Form submission ───────────────────────────────────────────────
