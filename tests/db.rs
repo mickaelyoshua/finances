@@ -1,3 +1,6 @@
+//! Integration tests for the DB layer. Each test gets a clean database via TRUNCATE.
+//! Tests are serialized with DB_LOCK because they share a single Postgres instance.
+
 use chrono::NaiveDate;
 use rust_decimal_macros::dec;
 use sqlx::PgPool;
@@ -880,6 +883,236 @@ async fn deactivate_recurring_hides_from_list() {
     let list = recurring::list_recurring(&pool).await.unwrap();
     assert!(list.is_empty());
 }
+
+// ═══════════════════════════════════════
+// TRANSACTION FILTERS & PAGINATION
+// ═══════════════════════════════════════
+
+#[tokio::test]
+async fn count_filtered_matches_list_len() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+    let cat = make_expense_category(&pool, "Food").await;
+
+    for day in [1, 5, 10] {
+        transactions::create_transaction(
+            &pool, dec!(10), &format!("Day {day}"), cat.id, acc.id,
+            TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, day),
+        ).await.unwrap();
+    }
+
+    let filters = transactions::TransactionFilterParams::default();
+    let list = transactions::list_filtered(&pool, &filters, 100, 0).await.unwrap();
+    let count = transactions::count_filtered(&pool, &filters).await.unwrap();
+
+    assert_eq!(count, list.len() as u64);
+    assert_eq!(count, 3);
+}
+
+#[tokio::test]
+async fn filter_by_description_ilike() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+    let cat = make_expense_category(&pool, "Food").await;
+
+    transactions::create_transaction(
+        &pool, dec!(10), "Supermarket groceries", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
+    ).await.unwrap();
+    transactions::create_transaction(
+        &pool, dec!(20), "Restaurant dinner", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 2),
+    ).await.unwrap();
+
+    let filters = transactions::TransactionFilterParams {
+        description: Some("supermarket".into()), // case-insensitive partial match
+        ..Default::default()
+    };
+    let list = transactions::list_filtered(&pool, &filters, 100, 0).await.unwrap();
+
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].description, "Supermarket groceries");
+}
+
+#[tokio::test]
+async fn filter_by_account_id() {
+    let (_guard, pool) = setup().await;
+    let acc_a = make_checking(&pool, "Nubank").await;
+    let acc_b = make_checking(&pool, "Inter").await;
+    let cat = make_expense_category(&pool, "Food").await;
+
+    transactions::create_transaction(
+        &pool, dec!(10), "Nubank txn", cat.id, acc_a.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
+    ).await.unwrap();
+    transactions::create_transaction(
+        &pool, dec!(20), "Inter txn", cat.id, acc_b.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 2),
+    ).await.unwrap();
+
+    let filters = transactions::TransactionFilterParams {
+        account_id: Some(acc_b.id),
+        ..Default::default()
+    };
+    let list = transactions::list_filtered(&pool, &filters, 100, 0).await.unwrap();
+
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].description, "Inter txn");
+}
+
+#[tokio::test]
+async fn filter_by_transaction_type() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+    let exp_cat = make_expense_category(&pool, "Food").await;
+    let inc_cat = make_income_category(&pool, "Salary").await;
+
+    transactions::create_transaction(
+        &pool, dec!(50), "expense", exp_cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
+    ).await.unwrap();
+    transactions::create_transaction(
+        &pool, dec!(1000), "income", inc_cat.id, acc.id,
+        TransactionType::Income, PaymentMethod::Transfer, date(2026, 3, 1),
+    ).await.unwrap();
+
+    let filters = transactions::TransactionFilterParams {
+        transaction_type: Some(TransactionType::Income),
+        ..Default::default()
+    };
+    let list = transactions::list_filtered(&pool, &filters, 100, 0).await.unwrap();
+
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].description, "income");
+}
+
+#[tokio::test]
+async fn filter_by_payment_method() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+    let cat = make_expense_category(&pool, "Food").await;
+
+    transactions::create_transaction(
+        &pool, dec!(10), "pix txn", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
+    ).await.unwrap();
+    transactions::create_transaction(
+        &pool, dec!(20), "credit txn", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Credit, date(2026, 3, 2),
+    ).await.unwrap();
+
+    let filters = transactions::TransactionFilterParams {
+        payment_method: Some(PaymentMethod::Credit),
+        ..Default::default()
+    };
+    let list = transactions::list_filtered(&pool, &filters, 100, 0).await.unwrap();
+
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].description, "credit txn");
+}
+
+#[tokio::test]
+async fn filter_combined_narrows_results() {
+    let (_guard, pool) = setup().await;
+    let acc_a = make_checking(&pool, "Nubank").await;
+    let acc_b = make_checking(&pool, "Inter").await;
+    let cat = make_expense_category(&pool, "Food").await;
+
+    // Nubank, March 1
+    transactions::create_transaction(
+        &pool, dec!(10), "Nubank Mar", cat.id, acc_a.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
+    ).await.unwrap();
+    // Nubank, March 15
+    transactions::create_transaction(
+        &pool, dec!(20), "Nubank Mar mid", cat.id, acc_a.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 15),
+    ).await.unwrap();
+    // Inter, March 1
+    transactions::create_transaction(
+        &pool, dec!(30), "Inter Mar", cat.id, acc_b.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
+    ).await.unwrap();
+
+    // Filter: Nubank + date range [Mar 10, Mar 31]
+    let filters = transactions::TransactionFilterParams {
+        account_id: Some(acc_a.id),
+        date_from: Some(date(2026, 3, 10)),
+        date_to: Some(date(2026, 3, 31)),
+        ..Default::default()
+    };
+    let list = transactions::list_filtered(&pool, &filters, 100, 0).await.unwrap();
+    let count = transactions::count_filtered(&pool, &filters).await.unwrap();
+
+    assert_eq!(list.len(), 1);
+    assert_eq!(count, 1);
+    assert_eq!(list[0].description, "Nubank Mar mid");
+}
+
+#[tokio::test]
+async fn pagination_offset_skips_rows() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+    let cat = make_expense_category(&pool, "Food").await;
+
+    for day in 1..=5 {
+        transactions::create_transaction(
+            &pool, dec!(10), &format!("txn-{day}"), cat.id, acc.id,
+            TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, day),
+        ).await.unwrap();
+    }
+
+    let filters = transactions::TransactionFilterParams::default();
+
+    // Page 1: limit 2, offset 0 → 2 most recent (day 5, 4)
+    let page1 = transactions::list_filtered(&pool, &filters, 2, 0).await.unwrap();
+    assert_eq!(page1.len(), 2);
+    assert_eq!(page1[0].date, date(2026, 3, 5));
+    assert_eq!(page1[1].date, date(2026, 3, 4));
+
+    // Page 2: limit 2, offset 2 → next 2 (day 3, 2)
+    let page2 = transactions::list_filtered(&pool, &filters, 2, 2).await.unwrap();
+    assert_eq!(page2.len(), 2);
+    assert_eq!(page2[0].date, date(2026, 3, 3));
+    assert_eq!(page2[1].date, date(2026, 3, 2));
+
+    // Page 3: limit 2, offset 4 → last 1 (day 1)
+    let page3 = transactions::list_filtered(&pool, &filters, 2, 4).await.unwrap();
+    assert_eq!(page3.len(), 1);
+    assert_eq!(page3[0].date, date(2026, 3, 1));
+}
+
+#[tokio::test]
+async fn count_filtered_with_filters() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+    let exp_cat = make_expense_category(&pool, "Food").await;
+    let inc_cat = make_income_category(&pool, "Salary").await;
+
+    transactions::create_transaction(
+        &pool, dec!(10), "a", exp_cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
+    ).await.unwrap();
+    transactions::create_transaction(
+        &pool, dec!(20), "b", exp_cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 2),
+    ).await.unwrap();
+    transactions::create_transaction(
+        &pool, dec!(1000), "c", inc_cat.id, acc.id,
+        TransactionType::Income, PaymentMethod::Transfer, date(2026, 3, 3),
+    ).await.unwrap();
+
+    let filters = transactions::TransactionFilterParams {
+        transaction_type: Some(TransactionType::Expense),
+        ..Default::default()
+    };
+    let count = transactions::count_filtered(&pool, &filters).await.unwrap();
+    assert_eq!(count, 2);
+}
+
+// ═══════════════════════════════════════
+// RECURRING (continued)
+// ═══════════════════════════════════════
 
 #[tokio::test]
 async fn advance_next_due_updates_date() {
