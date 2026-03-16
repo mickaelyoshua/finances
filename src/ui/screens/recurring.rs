@@ -1,4 +1,5 @@
 use chrono::{Local, NaiveDate};
+use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -7,17 +8,22 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
+use tracing::info;
 
 use crate::{
     models::{
-        Account, Category, Frequency, PaymentMethod, RecurringTransaction,
-        TransactionType,
+        Account, Category, Frequency, PaymentMethod, RecurringTransaction, TransactionType,
     },
     ui::{
         App,
+        app::{
+            ConfirmAction, InputMode, StatusMessage, clamp_selection, cycle_index, is_toggle_key,
+            move_table_selection,
+        },
         components::{
             format::{format_brl, parse_positive_amount},
             input::InputField,
+            popup::ConfirmPopup,
             toggle::{push_form_error, render_selector, render_toggle},
         },
     },
@@ -381,4 +387,255 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let block = Block::default().borders(Borders::ALL).title(title);
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+// ── Key handling & form submission (impl App) ─────────────────────
+
+impl App {
+    pub(crate) async fn handle_recurring_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        match code {
+            KeyCode::Up => {
+                move_table_selection(
+                    &mut self.recurring_table_state,
+                    self.recurring_list.len(),
+                    -1,
+                );
+            }
+            KeyCode::Down => {
+                move_table_selection(
+                    &mut self.recurring_table_state,
+                    self.recurring_list.len(),
+                    1,
+                );
+            }
+            KeyCode::Char('n') => {
+                if self.accounts.is_empty() {
+                    self.status_message = Some(StatusMessage::error("Create an account first"));
+                } else if self.categories.is_empty() {
+                    self.status_message = Some(StatusMessage::error("Create a category first"));
+                } else {
+                    self.recurring_form = Some(RecurringForm::new_create());
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('e') => {
+                if let Some(r) = self
+                    .recurring_table_state
+                    .selected()
+                    .and_then(|i| self.recurring_list.get(i))
+                {
+                    let r = r.clone();
+                    self.recurring_form = Some(RecurringForm::new_edit(
+                        &r,
+                        &self.accounts,
+                        &self.categories,
+                    ));
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(r) = self
+                    .recurring_table_state
+                    .selected()
+                    .and_then(|i| self.recurring_list.get(i))
+                {
+                    let r_id = r.id;
+                    let r_desc = r.description.clone();
+                    self.confirm_action = Some(ConfirmAction::DeactivateRecurring(r_id));
+                    self.confirm_popup =
+                        Some(ConfirmPopup::new(format!("Deactivate \"{}\"?", r_desc)));
+                }
+            }
+            KeyCode::Char('c') => {
+                self.confirm_recurring().await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub(crate) fn handle_recurring_form_key(&mut self, code: KeyCode) {
+        let form = self.recurring_form.as_mut().unwrap();
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                if form.active_field < RecurringField::ALL.len() - 1 {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                RecurringField::Description => form.description.handle_key(code),
+                RecurringField::Amount => form.amount.handle_key(code),
+                RecurringField::NextDue => form.next_due.handle_key(code),
+                RecurringField::TransactionType => {
+                    if is_toggle_key(code) {
+                        form.transaction_type = match form.transaction_type {
+                            TransactionType::Expense => TransactionType::Income,
+                            TransactionType::Income => TransactionType::Expense,
+                        };
+                        form.category_idx = 0;
+                    }
+                }
+                RecurringField::Account => {
+                    if is_toggle_key(code) {
+                        cycle_index(&mut form.account_idx, self.accounts.len(), code);
+                        form.payment_method_idx = 0;
+                    }
+                }
+                RecurringField::PaymentMethod => {
+                    if is_toggle_key(code) {
+                        let len = self
+                            .accounts
+                            .get(form.account_idx)
+                            .map(|a| a.allowed_payment_methods().len())
+                            .unwrap_or(0);
+                        cycle_index(&mut form.payment_method_idx, len, code);
+                    }
+                }
+                RecurringField::Category => {
+                    if is_toggle_key(code) {
+                        let len = self
+                            .categories
+                            .iter()
+                            .filter(|c| c.parsed_type() == form.transaction_type.category_type())
+                            .count();
+                        cycle_index(&mut form.category_idx, len, code);
+                    }
+                }
+                RecurringField::Frequency => {
+                    if is_toggle_key(code) {
+                        cycle_index(&mut form.frequency_idx, FREQUENCIES.len(), code);
+                    }
+                }
+            },
+        }
+    }
+
+    pub(crate) async fn submit_recurring_form(&mut self) -> anyhow::Result<()> {
+        use crate::db::recurring;
+
+        let form = self.recurring_form.as_ref().unwrap();
+        let validated = match form.validate(&self.accounts, &self.categories) {
+            Ok(v) => v,
+            Err(e) => {
+                self.recurring_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
+            }
+        };
+
+        match form.mode {
+            RecurringFormMode::Create => {
+                recurring::create_recurring(
+                    &self.pool,
+                    validated.amount,
+                    &validated.description,
+                    validated.category_id,
+                    validated.account_id,
+                    validated.transaction_type,
+                    validated.payment_method,
+                    validated.frequency,
+                    validated.next_due,
+                )
+                .await?;
+                info!(desc = %validated.description, "recurring transaction created");
+            }
+            RecurringFormMode::Edit(id) => {
+                recurring::update_recurring(
+                    &self.pool,
+                    id,
+                    validated.amount,
+                    &validated.description,
+                    validated.category_id,
+                    validated.account_id,
+                    validated.transaction_type,
+                    validated.payment_method,
+                    validated.frequency,
+                    validated.next_due,
+                )
+                .await?;
+                info!(id, desc = %validated.description, "recurring transaction updated");
+            }
+        }
+
+        self.recurring_form = None;
+        self.input_mode = InputMode::Normal;
+        self.load_data().await?;
+        Ok(())
+    }
+
+    async fn confirm_recurring(&mut self) -> anyhow::Result<()> {
+        use crate::db::recurring;
+
+        let today = Local::now().date_naive();
+
+        let r = match self
+            .recurring_table_state
+            .selected()
+            .and_then(|i| self.recurring_list.get(i))
+        {
+            Some(r) => r.clone(),
+            None => return Ok(()),
+        };
+
+        if r.next_due > today {
+            self.status_message = Some(StatusMessage::error(format!(
+                "Not due yet (next due: {})",
+                r.next_due.format("%d-%m-%Y")
+            )));
+            return Ok(());
+        }
+
+        let new_next_due = recurring::compute_next_due(r.next_due, r.parsed_frequency());
+
+        // Atomic: create the transaction AND advance the due date in one transaction
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(
+            "INSERT INTO transactions (amount, description, category_id, account_id, transaction_type, payment_method, date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(r.amount)
+        .bind(&r.description)
+        .bind(r.category_id)
+        .bind(r.account_id)
+        .bind(r.parsed_type().as_str())
+        .bind(r.parsed_payment_method().as_str())
+        .bind(r.next_due)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("UPDATE recurring_transactions SET next_due = $2 WHERE id = $1")
+            .bind(r.id)
+            .bind(new_next_due)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        info!(
+            id = r.id,
+            desc = %r.description,
+            next_due = %new_next_due,
+            "recurring transaction confirmed"
+        );
+
+        self.load_data().await?;
+        self.status_message = Some(StatusMessage::info(format!(
+            "Confirmed \"{}\" — next due: {}",
+            r.description,
+            new_next_due.format("%d-%m-%Y")
+        )));
+        Ok(())
+    }
+
+    pub(crate) async fn execute_deactivate_recurring(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::recurring::deactivate_recurring(&self.pool, id).await?;
+        info!(id, "recurring transaction deactivated");
+        self.load_data().await?;
+        clamp_selection(&mut self.recurring_table_state, self.recurring_list.len());
+        Ok(())
+    }
 }

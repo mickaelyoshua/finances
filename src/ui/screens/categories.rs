@@ -1,3 +1,4 @@
+use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -5,13 +6,19 @@ use ratatui::{
     text::Line,
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
+use tracing::info;
 
 use crate::{
     models::CategoryType,
     ui::{
         App,
+        app::{
+            ConfirmAction, InputMode, StatusMessage, clamp_selection, is_toggle_key,
+            move_table_selection,
+        },
         components::{
             input::InputField,
+            popup::ConfirmPopup,
             toggle::{push_form_error, render_toggle},
         },
     },
@@ -187,4 +194,136 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let block = Block::default().borders(Borders::ALL).title(title);
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+// ── Key handling & form submission (impl App) ─────────────────────
+
+impl App {
+    pub(crate) async fn handle_categories_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        match code {
+            KeyCode::Up => {
+                move_table_selection(&mut self.category_table_state, self.categories.len(), -1);
+            }
+            KeyCode::Down => {
+                move_table_selection(&mut self.category_table_state, self.categories.len(), 1);
+            }
+            KeyCode::Char('n') => {
+                self.category_form = Some(CategoryForm::new_create());
+                self.input_mode = InputMode::Editing;
+            }
+            KeyCode::Char('e') => {
+                if let Some(cat) = self
+                    .category_table_state
+                    .selected()
+                    .and_then(|i| self.categories.get(i))
+                {
+                    self.category_form = Some(CategoryForm::new_edit(cat));
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(cat) = self
+                    .category_table_state
+                    .selected()
+                    .and_then(|i| self.categories.get(i))
+                {
+                    let cat_id = cat.id;
+                    let cat_name = cat.name.clone();
+                    if crate::db::categories::has_references(&self.pool, cat_id).await? {
+                        self.status_message = Some(StatusMessage::error(format!(
+                            "Cannot delete \"{cat_name}\": category is in use"
+                        )));
+                    } else {
+                        self.confirm_action = Some(ConfirmAction::DeleteCategory(cat_id));
+                        self.confirm_popup =
+                            Some(ConfirmPopup::new(format!("Delete \"{cat_name}\"?")));
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub(crate) fn handle_category_form_key(&mut self, code: KeyCode) {
+        let form = self.category_form.as_mut().unwrap();
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                if form.active_field < CategoryField::ALL.len() - 1 {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                CategoryField::Name => form.name.handle_key(code),
+                CategoryField::CategoryType => {
+                    if is_toggle_key(code) {
+                        form.category_type = match form.category_type {
+                            CategoryType::Expense => CategoryType::Income,
+                            CategoryType::Income => CategoryType::Expense,
+                        };
+                    }
+                }
+            },
+        }
+    }
+
+    pub(crate) async fn submit_category_form(&mut self) -> anyhow::Result<()> {
+        use crate::db::categories;
+
+        let form = self.category_form.as_ref().unwrap();
+        let validated = match form.validate() {
+            Ok(v) => v,
+            Err(e) => {
+                self.category_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
+            }
+        };
+
+        // Extract mode info before dropping the shared borrow
+        let edit_id = match form.mode {
+            CategoryFormMode::Create => None,
+            CategoryFormMode::Edit(id) => Some(id),
+        };
+
+        if let Some(id) = edit_id {
+            // Guard: block type change if category is referenced
+            if let Some(old) = self.categories.iter().find(|c| c.id == id) {
+                if old.parsed_type() != validated.category_type
+                    && categories::has_references(&self.pool, id).await?
+                {
+                    self.category_form.as_mut().unwrap().error = Some(
+                        "Cannot change type: category is referenced by transactions or budgets"
+                            .into(),
+                    );
+                    return Ok(());
+                }
+            }
+
+            categories::update_category(&self.pool, id, &validated.name, validated.category_type)
+                .await?;
+            info!(id, name = %validated.name, "category updated");
+        } else {
+            categories::create_category(&self.pool, &validated.name, validated.category_type)
+                .await?;
+            info!(name = %validated.name, "category created");
+        }
+
+        self.category_form = None;
+        self.input_mode = InputMode::Normal;
+        self.load_data().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn execute_delete_category(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::categories::delete_category(&self.pool, id).await?;
+        info!(id, "category deleted");
+        self.load_data().await?;
+        clamp_selection(&mut self.category_table_state, self.categories.len());
+        Ok(())
+    }
 }

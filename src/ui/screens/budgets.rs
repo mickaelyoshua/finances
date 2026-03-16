@@ -1,3 +1,4 @@
+use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -6,14 +7,20 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
+use tracing::info;
 
 use crate::{
     models::{BudgetPeriod, Category, CategoryType},
     ui::{
         App,
+        app::{
+            ConfirmAction, InputMode, StatusMessage, clamp_selection, cycle_index, is_toggle_key,
+            move_table_selection,
+        },
         components::{
             format::{format_brl, parse_positive_amount},
             input::InputField,
+            popup::ConfirmPopup,
             toggle::{push_form_error, render_selector, render_toggle},
         },
     },
@@ -270,4 +277,168 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let block = Block::default().borders(Borders::ALL).title(title);
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+// ── Key handling & form submission (impl App) ─────────────────────
+
+impl App {
+    pub(crate) async fn handle_budgets_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        match code {
+            KeyCode::Up => {
+                move_table_selection(&mut self.budget_table_state, self.budgets.len(), -1);
+            }
+            KeyCode::Down => {
+                move_table_selection(&mut self.budget_table_state, self.budgets.len(), 1);
+            }
+            KeyCode::Char('n') => {
+                let has_expense_cat = self
+                    .categories
+                    .iter()
+                    .any(|c| c.parsed_type() == CategoryType::Expense);
+                if !has_expense_cat {
+                    self.status_message =
+                        Some(StatusMessage::error("Create an expense category first"));
+                } else {
+                    self.budget_form = Some(BudgetForm::new_create());
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('e') => {
+                if let Some(b) = self
+                    .budget_table_state
+                    .selected()
+                    .and_then(|i| self.budgets.get(i))
+                {
+                    let b = b.clone();
+                    self.budget_form = Some(BudgetForm::new_edit(&b, &self.categories));
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(b) = self
+                    .budget_table_state
+                    .selected()
+                    .and_then(|i| self.budgets.get(i))
+                {
+                    let budget_id = b.id;
+                    let category_name = self.category_name(b.category_id).to_string();
+                    self.confirm_action = Some(ConfirmAction::DeleteBudget(budget_id));
+                    self.confirm_popup = Some(ConfirmPopup::new(format!(
+                        "Delete budget for \"{category_name}\"?"
+                    )));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub(crate) fn handle_budget_form_key(&mut self, code: KeyCode) {
+        let form = self.budget_form.as_mut().unwrap();
+        let is_edit = matches!(form.mode, BudgetFormMode::Edit(_));
+
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                if is_edit {
+                    // Only Amount (index 1) is editable in edit mode
+                    form.active_field = 1;
+                } else if form.active_field < BudgetField::ALL.len() - 1 {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if is_edit {
+                    form.active_field = 1;
+                } else if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                BudgetField::Amount => form.amount.handle_key(code),
+                BudgetField::Category if !is_edit => {
+                    if is_toggle_key(code) {
+                        let len = self
+                            .categories
+                            .iter()
+                            .filter(|c| c.parsed_type() == CategoryType::Expense)
+                            .count();
+                        cycle_index(&mut form.category_idx, len, code);
+                    }
+                }
+                BudgetField::Period if !is_edit => {
+                    if is_toggle_key(code) {
+                        cycle_index(&mut form.period_idx, PERIODS.len(), code);
+                    }
+                }
+                _ => {} // locked fields in edit mode
+            },
+        }
+    }
+
+    pub(crate) async fn submit_budget_form(&mut self) -> anyhow::Result<()> {
+        use crate::db::budgets;
+
+        let form = self.budget_form.as_ref().unwrap();
+        let validated = match form.validate(&self.categories) {
+            Ok(v) => v,
+            Err(e) => {
+                self.budget_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
+            }
+        };
+
+        let is_edit = match form.mode {
+            BudgetFormMode::Create => false,
+            BudgetFormMode::Edit(_) => true,
+        };
+
+        if is_edit {
+            let id = match form.mode {
+                BudgetFormMode::Edit(id) => id,
+                _ => unreachable!(),
+            };
+            budgets::update_budget(&self.pool, id, validated.amount).await?;
+            info!(id, amount = %validated.amount, "budget updated");
+        } else {
+            match budgets::create_budget(
+                &self.pool,
+                validated.category_id,
+                validated.amount,
+                validated.period,
+            )
+            .await
+            {
+                Ok(_) => {
+                    info!(
+                        category_id = validated.category_id,
+                        amount = %validated.amount,
+                        "budget created"
+                    );
+                }
+                Err(e) => {
+                    if e.as_database_error()
+                        .is_some_and(|db_err| db_err.is_unique_violation())
+                    {
+                        self.budget_form.as_mut().unwrap().error =
+                            Some("A budget for this category and period already exists".into());
+                        return Ok(());
+                    }
+                    return Err(e.into());
+                }
+            }
+        }
+
+        self.budget_form = None;
+        self.input_mode = InputMode::Normal;
+        self.load_data().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn execute_delete_budget(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::budgets::delete_budget(&self.pool, id).await?;
+        info!(id, "budget deleted");
+        self.load_data().await?;
+        clamp_selection(&mut self.budget_table_state, self.budgets.len());
+        Ok(())
+    }
 }

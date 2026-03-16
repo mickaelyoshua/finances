@@ -1,4 +1,5 @@
 use chrono::{Local, NaiveDate};
+use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -7,14 +8,20 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
+use tracing::info;
 
 use crate::{
     models::Account,
     ui::{
         App,
+        app::{
+            ConfirmAction, InputMode, StatusMessage, clamp_selection, cycle_index,
+            move_table_selection,
+        },
         components::{
             format::{format_brl, parse_positive_amount},
             input::InputField,
+            popup::ConfirmPopup,
             toggle::{push_form_error, render_selector},
         },
     },
@@ -208,4 +215,120 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
         .borders(Borders::ALL)
         .title("New Credit Card Payment");
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+// ── Key handling & form submission (impl App) ─────────────────────
+
+impl App {
+    pub(crate) async fn handle_cc_payments_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        match code {
+            KeyCode::Up => {
+                move_table_selection(
+                    &mut self.cc_payment_table_state,
+                    self.cc_payments.len(),
+                    -1,
+                );
+            }
+            KeyCode::Down => {
+                move_table_selection(
+                    &mut self.cc_payment_table_state,
+                    self.cc_payments.len(),
+                    1,
+                );
+            }
+            KeyCode::Char('n') => {
+                let has_cc = self.accounts.iter().any(|a| a.has_credit_card);
+                if !has_cc {
+                    self.status_message = Some(StatusMessage::error(
+                        "No account with credit card available",
+                    ));
+                } else {
+                    self.cc_payment_form = Some(CcPaymentForm::new_create());
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(p) = self
+                    .cc_payment_table_state
+                    .selected()
+                    .and_then(|i| self.cc_payments.get(i))
+                {
+                    let p_id = p.id;
+                    let p_desc = p.description.clone();
+                    self.confirm_action = Some(ConfirmAction::DeleteCreditCardPayment(p_id));
+                    self.confirm_popup =
+                        Some(ConfirmPopup::new(format!("Delete payment \"{}\"?", p_desc)));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub(crate) fn handle_cc_payment_form_key(&mut self, code: KeyCode) {
+        let form = self.cc_payment_form.as_mut().unwrap();
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                if form.active_field < CcPaymentField::ALL.len() - 1 {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                CcPaymentField::Date => form.date.handle_key(code),
+                CcPaymentField::Account => {
+                    if crate::ui::app::is_toggle_key(code) {
+                        let len = self.accounts.iter().filter(|a| a.has_credit_card).count();
+                        cycle_index(&mut form.account_idx, len, code);
+                    }
+                }
+                CcPaymentField::Amount => form.amount.handle_key(code),
+                CcPaymentField::Description => form.description.handle_key(code),
+            },
+        }
+    }
+
+    pub(crate) async fn submit_cc_payment_form(&mut self) -> anyhow::Result<()> {
+        use crate::db::credit_card_payments;
+
+        let form = self.cc_payment_form.as_ref().unwrap();
+        let validated = match form.validate(&self.accounts) {
+            Ok(v) => v,
+            Err(e) => {
+                self.cc_payment_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
+            }
+        };
+
+        credit_card_payments::create_payment(
+            &self.pool,
+            validated.account_id,
+            validated.amount,
+            validated.date,
+            &validated.description,
+        )
+        .await?;
+        info!(
+            desc = %validated.description,
+            amount = %validated.amount,
+            "credit card payment created"
+        );
+
+        self.cc_payment_form = None;
+        self.input_mode = InputMode::Normal;
+        self.load_data().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn execute_delete_cc_payment(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::credit_card_payments::delete_payment(&self.pool, id).await?;
+        info!(id, "credit card payment deleted");
+        self.load_data().await?;
+        clamp_selection(&mut self.cc_payment_table_state, self.cc_payments.len());
+        Ok(())
+    }
 }

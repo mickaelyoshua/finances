@@ -1,3 +1,4 @@
+use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -6,14 +7,19 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
+use tracing::info;
 
 use crate::{
     models::{Account, AccountType},
     ui::{
         App,
+        app::{
+            ConfirmAction, InputMode, clamp_selection, is_toggle_key, move_table_selection,
+        },
         components::{
             format::format_brl,
             input::InputField,
+            popup::ConfirmPopup,
             toggle::{push_form_error, render_toggle},
         },
     },
@@ -265,6 +271,197 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let detail = Paragraph::new(detail_content).block(detail_block);
 
     frame.render_widget(detail, detail_area);
+}
+
+// ── Key handling & form submission (impl App) ─────────────────────
+
+impl App {
+    pub(crate) async fn handle_accounts_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        match code {
+            KeyCode::Up => {
+                move_table_selection(&mut self.account_table_state, self.accounts.len(), -1);
+            }
+            KeyCode::Down => {
+                move_table_selection(&mut self.account_table_state, self.accounts.len(), 1);
+            }
+            KeyCode::Char('n') => {
+                self.account_form = Some(AccountForm::new_create());
+                self.input_mode = InputMode::Editing;
+            }
+            KeyCode::Char('e') => {
+                if let Some(acc) = self
+                    .account_table_state
+                    .selected()
+                    .and_then(|i| self.accounts.get(i))
+                {
+                    self.account_form = Some(AccountForm::new_edit(acc));
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(acc) = self
+                    .account_table_state
+                    .selected()
+                    .and_then(|i| self.accounts.get(i))
+                {
+                    let acc_id = acc.id;
+                    let acc_name = acc.name.clone();
+                    if crate::db::accounts::has_references(&self.pool, acc_id).await? {
+                        self.confirm_action = Some(ConfirmAction::DeactivateAccount(acc_id));
+                        self.confirm_popup = Some(ConfirmPopup::new(format!(
+                            "Deactivate \"{}\"? It has existing transactions/transfers.",
+                            acc_name
+                        )));
+                    } else {
+                        self.confirm_action = Some(ConfirmAction::DeactivateAccount(acc_id));
+                        self.confirm_popup =
+                            Some(ConfirmPopup::new(format!("Deactivate \"{}\"?", acc_name)));
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub(crate) fn handle_account_form_key(&mut self, code: KeyCode) {
+        let form = self.account_form.as_mut().unwrap();
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                let max = form.visible_fields().len() - 1;
+                if form.active_field < max {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                AccountField::Name => form.name.handle_key(code),
+                AccountField::CreditLimit => form.credit_limit.handle_key(code),
+                AccountField::BillingDay => form.billing_day.handle_key(code),
+                AccountField::DueDay => form.due_day.handle_key(code),
+                AccountField::AccountType => {
+                    if is_toggle_key(code) {
+                        form.account_type = match form.account_type {
+                            AccountType::Checking => AccountType::Cash,
+                            AccountType::Cash => AccountType::Checking,
+                        };
+                        if form.account_type == AccountType::Cash {
+                            form.has_credit_card = false;
+                            form.has_debit_card = false;
+                        }
+                        let max = form.visible_fields().len() - 1;
+                        form.active_field = form.active_field.min(max);
+                    }
+                }
+                AccountField::HasCreditCard => {
+                    if is_toggle_key(code) {
+                        form.has_credit_card = !form.has_credit_card;
+                        let max = form.visible_fields().len() - 1;
+                        form.active_field = form.active_field.min(max);
+                    }
+                }
+                AccountField::HasDebitCard => {
+                    if is_toggle_key(code) {
+                        form.has_debit_card = !form.has_debit_card;
+                    }
+                }
+            },
+        }
+    }
+
+    pub(crate) async fn submit_account_form(&mut self) -> anyhow::Result<()> {
+        use crate::db::accounts;
+
+        let form = self.account_form.as_ref().unwrap();
+        let validated = match form.validate() {
+            Ok(v) => v,
+            Err(e) => {
+                self.account_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
+            }
+        };
+
+        // Extract mode info before dropping the shared borrow
+        let edit_id = match form.mode {
+            AccountFormMode::Create => None,
+            AccountFormMode::Edit(id) => Some(id),
+        };
+
+        if let Some(id) = edit_id {
+            // Guard: block breaking changes when the account has transactions
+            if let Some(old) = self.accounts.iter().find(|a| a.id == id) {
+                let type_changed = old.parsed_type() != validated.account_type;
+                let credit_removed = old.has_credit_card && !validated.has_credit_card;
+                let debit_removed = old.has_debit_card && !validated.has_debit_card;
+
+                if type_changed || credit_removed || debit_removed {
+                    let used = accounts::used_payment_methods(&self.pool, id).await?;
+
+                    if type_changed && !used.is_empty() {
+                        self.account_form.as_mut().unwrap().error =
+                            Some("Cannot change account type: account has transactions".into());
+                        return Ok(());
+                    }
+                    if credit_removed && used.iter().any(|m| m == "credit") {
+                        self.account_form.as_mut().unwrap().error = Some(
+                            "Cannot disable credit card: account has credit transactions".into(),
+                        );
+                        return Ok(());
+                    }
+                    if debit_removed && used.iter().any(|m| m == "debit") {
+                        self.account_form.as_mut().unwrap().error = Some(
+                            "Cannot disable debit card: account has debit transactions".into(),
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+
+            accounts::update_account(
+                &self.pool,
+                id,
+                &validated.name,
+                validated.account_type,
+                validated.has_credit_card,
+                validated.credit_limit,
+                validated.billing_day,
+                validated.due_day,
+                validated.has_debit_card,
+            )
+            .await?;
+            info!(id, name = %validated.name, "account updated");
+        } else {
+            accounts::create_account(
+                &self.pool,
+                &validated.name,
+                validated.account_type,
+                validated.has_credit_card,
+                validated.credit_limit,
+                validated.billing_day,
+                validated.due_day,
+                validated.has_debit_card,
+            )
+            .await?;
+            info!(name = %validated.name, "account created");
+        }
+
+        self.account_form = None;
+        self.input_mode = InputMode::Normal;
+        self.load_data().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn execute_deactivate(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::accounts::deactivate_account(&self.pool, id).await?;
+        info!(id, "account deactivated");
+        self.load_data().await?;
+        clamp_selection(&mut self.account_table_state, self.accounts.len());
+        Ok(())
+    }
 }
 
 fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {

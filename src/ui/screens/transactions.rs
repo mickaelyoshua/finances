@@ -1,4 +1,5 @@
 use chrono::{Local, NaiveDate};
+use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -7,13 +8,17 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
+use tracing::info;
 
 use crate::{
     db::transactions::TransactionFilterParams,
     models::{Account, Category, PaymentMethod, Transaction, TransactionType},
     ui::{
-        app::InputMode,
         App,
+        app::{
+            ConfirmAction, InputMode, StatusMessage, PAGE_SIZE, clamp_selection, cycle_index,
+            is_toggle_key, move_table_selection,
+        },
         components::{
             format::{format_brl, parse_positive_amount},
             input::InputField,
@@ -587,4 +592,291 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let block = Block::default().borders(Borders::ALL).title(title);
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+// ── Key handling & form submission (impl App) ─────────────────────
+
+impl App {
+    pub(crate) async fn handle_transactions_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        match code {
+            KeyCode::Up => {
+                move_table_selection(
+                    &mut self.transaction_table_state,
+                    self.transactions.len(),
+                    -1,
+                );
+            }
+            KeyCode::Down => {
+                move_table_selection(
+                    &mut self.transaction_table_state,
+                    self.transactions.len(),
+                    1,
+                );
+            }
+            KeyCode::Char('n') => {
+                if self.accounts.is_empty() {
+                    self.status_message = Some(StatusMessage::error("Create an account first"));
+                } else if self.categories.is_empty() {
+                    self.status_message = Some(StatusMessage::error("Create a category first"));
+                } else {
+                    self.transaction_form = Some(TransactionForm::new_create());
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('e') => {
+                if let Some(txn) = self
+                    .transaction_table_state
+                    .selected()
+                    .and_then(|i| self.transactions.get(i))
+                {
+                    if txn.installment_purchase_id.is_some() {
+                        self.status_message = Some(StatusMessage::error(
+                            "Installment transactions are managed from the Installments screen",
+                        ));
+                    } else {
+                        let txn = txn.clone();
+                        self.transaction_form = Some(TransactionForm::new_edit(
+                            &txn,
+                            &self.accounts,
+                            &self.categories,
+                        ));
+                        self.input_mode = InputMode::Editing;
+                    }
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(txn) = self
+                    .transaction_table_state
+                    .selected()
+                    .and_then(|i| self.transactions.get(i))
+                {
+                    if txn.installment_purchase_id.is_some() {
+                        self.status_message = Some(StatusMessage::error(
+                            "Installment transactions are managed from the Installments screen",
+                        ));
+                    } else {
+                        let txn_id = txn.id;
+                        let txn_desc = txn.description.clone();
+                        self.confirm_action = Some(ConfirmAction::DeleteTransaction(txn_id));
+                        self.confirm_popup =
+                            Some(crate::ui::components::popup::ConfirmPopup::new(format!(
+                                "Delete \"{txn_desc}\"?"
+                            )));
+                    }
+                }
+            }
+            KeyCode::Char('f') => {
+                self.transaction_filter.visible = true;
+                self.transaction_filter.active_field = 0;
+                self.input_mode = InputMode::Filtering;
+            }
+            KeyCode::Char('r') => {
+                self.transaction_filter = TransactionFilter::new();
+                self.transaction_offset = 0;
+                self.load_transactions().await?;
+                self.transaction_table_state.select(Some(0));
+            }
+            KeyCode::PageUp => {
+                if self.transaction_offset > 0 {
+                    self.transaction_offset =
+                        self.transaction_offset.saturating_sub(PAGE_SIZE);
+                    self.load_transactions().await?;
+                    self.transaction_table_state.select(Some(0));
+                }
+            }
+            KeyCode::PageDown => {
+                let next = self.transaction_offset + PAGE_SIZE;
+                if next < self.transaction_count {
+                    self.transaction_offset = next;
+                    self.load_transactions().await?;
+                    self.transaction_table_state.select(Some(0));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn handle_filtering_key(
+        &mut self,
+        key: crossterm::event::KeyEvent,
+    ) -> anyhow::Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Enter => {
+                self.transaction_offset = 0;
+                self.load_transactions().await?;
+                self.transaction_table_state.select(Some(0));
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Tab | KeyCode::Down => {
+                if self.transaction_filter.active_field < FilterField::ALL.len() - 1 {
+                    self.transaction_filter.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if self.transaction_filter.active_field > 0 {
+                    self.transaction_filter.active_field -= 1;
+                }
+            }
+            _ => match self.transaction_filter.active_field_id() {
+                FilterField::DateFrom => {
+                    self.transaction_filter.date_from.handle_key(key.code);
+                }
+                FilterField::DateTo => {
+                    self.transaction_filter.date_to.handle_key(key.code);
+                }
+                FilterField::Description => {
+                    self.transaction_filter.description.handle_key(key.code);
+                }
+                FilterField::Account => {
+                    if is_toggle_key(key.code) {
+                        let len = self.accounts.len();
+                        self.transaction_filter.account_idx =
+                            cycle_option(self.transaction_filter.account_idx, len);
+                    }
+                }
+                FilterField::Category => {
+                    if is_toggle_key(key.code) {
+                        let len = self.categories.len();
+                        self.transaction_filter.category_idx =
+                            cycle_option(self.transaction_filter.category_idx, len);
+                    }
+                }
+                FilterField::TransactionType => {
+                    if is_toggle_key(key.code) {
+                        self.transaction_filter.transaction_type_idx =
+                            cycle_option(self.transaction_filter.transaction_type_idx, 2);
+                    }
+                }
+                FilterField::PaymentMethod => {
+                    if is_toggle_key(key.code) {
+                        self.transaction_filter.payment_method_idx =
+                            cycle_option(self.transaction_filter.payment_method_idx, 6);
+                    }
+                }
+            },
+        }
+        Ok(())
+    }
+
+    pub(crate) fn handle_transaction_form_key(&mut self, code: KeyCode) {
+        let form = self.transaction_form.as_mut().unwrap();
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                if form.active_field < TransactionField::ALL.len() - 1 {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                TransactionField::Date => form.date.handle_key(code),
+                TransactionField::Description => form.description.handle_key(code),
+                TransactionField::Amount => form.amount.handle_key(code),
+                TransactionField::TransactionType => {
+                    if is_toggle_key(code) {
+                        form.transaction_type = match form.transaction_type {
+                            TransactionType::Expense => TransactionType::Income,
+                            TransactionType::Income => TransactionType::Expense,
+                        };
+                        form.category_idx = 0;
+                    }
+                }
+                TransactionField::Account => {
+                    if is_toggle_key(code) {
+                        cycle_index(&mut form.account_idx, self.accounts.len(), code);
+                        form.payment_method_idx = 0;
+                    }
+                }
+                TransactionField::PaymentMethod => {
+                    if is_toggle_key(code) {
+                        let len = self
+                            .accounts
+                            .get(form.account_idx)
+                            .map(|a| a.allowed_payment_methods().len())
+                            .unwrap_or(0);
+                        cycle_index(&mut form.payment_method_idx, len, code);
+                    }
+                }
+                TransactionField::Category => {
+                    if is_toggle_key(code) {
+                        let len = self
+                            .categories
+                            .iter()
+                            .filter(|c| c.parsed_type() == form.transaction_type.category_type())
+                            .count();
+                        cycle_index(&mut form.category_idx, len, code);
+                    }
+                }
+            },
+        }
+    }
+
+    pub(crate) async fn submit_transaction_form(&mut self) -> anyhow::Result<()> {
+        use crate::db::transactions;
+
+        let form = self.transaction_form.as_ref().unwrap();
+        let validated = match form.validate(&self.accounts, &self.categories) {
+            Ok(v) => v,
+            Err(e) => {
+                self.transaction_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
+            }
+        };
+
+        match form.mode {
+            TransactionFormMode::Create => {
+                transactions::create_transaction(
+                    &self.pool,
+                    validated.amount,
+                    &validated.description,
+                    validated.category_id,
+                    validated.account_id,
+                    validated.transaction_type,
+                    validated.payment_method,
+                    validated.date,
+                )
+                .await?;
+                info!(
+                    desc = %validated.description,
+                    amount = %validated.amount,
+                    "transaction created"
+                );
+            }
+            TransactionFormMode::Edit(id) => {
+                transactions::update_transaction(
+                    &self.pool,
+                    id,
+                    validated.amount,
+                    &validated.description,
+                    validated.category_id,
+                    validated.account_id,
+                    validated.transaction_type,
+                    validated.payment_method,
+                    validated.date,
+                )
+                .await?;
+                info!(id, desc = %validated.description, "transaction updated");
+            }
+        }
+
+        self.transaction_form = None;
+        self.input_mode = InputMode::Normal;
+        self.load_data().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn execute_delete_transaction(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::transactions::delete_transaction(&self.pool, id).await?;
+        info!(id, "transaction deleted");
+        self.load_data().await?;
+        clamp_selection(&mut self.transaction_table_state, self.transactions.len());
+        Ok(())
+    }
 }

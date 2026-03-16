@@ -1,4 +1,5 @@
 use chrono::{Local, NaiveDate};
+use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -7,14 +8,20 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
+use tracing::info;
 
 use crate::{
     models::Account,
     ui::{
         App,
+        app::{
+            ConfirmAction, InputMode, StatusMessage, clamp_selection, cycle_index,
+            move_table_selection,
+        },
         components::{
             format::{format_brl, parse_positive_amount},
             input::InputField,
+            popup::ConfirmPopup,
             toggle::{push_form_error, render_selector},
         },
     },
@@ -220,4 +227,118 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
         .borders(Borders::ALL)
         .title("New Transfer");
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+// ── Key handling & form submission (impl App) ─────────────────────
+
+impl App {
+    pub(crate) async fn handle_transfers_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        match code {
+            KeyCode::Up => {
+                move_table_selection(&mut self.transfer_table_state, self.transfers.len(), -1);
+            }
+            KeyCode::Down => {
+                move_table_selection(&mut self.transfer_table_state, self.transfers.len(), 1);
+            }
+            KeyCode::Char('n') => {
+                if self.accounts.len() < 2 {
+                    self.status_message = Some(StatusMessage::error(
+                        "Need at least 2 accounts for a transfer",
+                    ));
+                } else {
+                    self.transfer_form = Some(TransferForm::new_create());
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(t) = self
+                    .transfer_table_state
+                    .selected()
+                    .and_then(|i| self.transfers.get(i))
+                {
+                    let t_id = t.id;
+                    let t_desc = t.description.clone();
+                    self.confirm_action = Some(ConfirmAction::DeleteTransfer(t_id));
+                    self.confirm_popup = Some(ConfirmPopup::new(format!(
+                        "Delete transfer \"{}\"?",
+                        t_desc
+                    )));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub(crate) fn handle_transfer_form_key(&mut self, code: KeyCode) {
+        let form = self.transfer_form.as_mut().unwrap();
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                if form.active_field < TransferField::ALL.len() - 1 {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                TransferField::Date => form.date.handle_key(code),
+                TransferField::FromAccount => {
+                    if crate::ui::app::is_toggle_key(code) {
+                        cycle_index(&mut form.from_account_idx, self.accounts.len(), code);
+                    }
+                }
+                TransferField::ToAccount => {
+                    if crate::ui::app::is_toggle_key(code) {
+                        cycle_index(&mut form.to_account_idx, self.accounts.len(), code);
+                    }
+                }
+                TransferField::Amount => form.amount.handle_key(code),
+                TransferField::Description => form.description.handle_key(code),
+            },
+        }
+    }
+
+    pub(crate) async fn submit_transfer_form(&mut self) -> anyhow::Result<()> {
+        use crate::db::transfers;
+
+        let form = self.transfer_form.as_ref().unwrap();
+        let validated = match form.validate(&self.accounts) {
+            Ok(v) => v,
+            Err(e) => {
+                self.transfer_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
+            }
+        };
+
+        transfers::create_transfer(
+            &self.pool,
+            validated.from_account_id,
+            validated.to_account_id,
+            validated.amount,
+            &validated.description,
+            validated.date,
+        )
+        .await?;
+        info!(
+            desc = %validated.description,
+            amount = %validated.amount,
+            "transfer created"
+        );
+
+        self.transfer_form = None;
+        self.input_mode = InputMode::Normal;
+        self.load_data().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn execute_delete_transfer(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::transfers::delete_transfer(&self.pool, id).await?;
+        info!(id, "transfer deleted");
+        self.load_data().await?;
+        clamp_selection(&mut self.transfer_table_state, self.transfers.len());
+        Ok(())
+    }
 }

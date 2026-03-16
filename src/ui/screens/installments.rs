@@ -1,4 +1,5 @@
 use chrono::{Local, NaiveDate};
+use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -7,14 +8,20 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
+use tracing::info;
 
 use crate::{
     models::{Category, CategoryType},
     ui::{
         App,
+        app::{
+            ConfirmAction, InputMode, StatusMessage, clamp_selection, cycle_index, is_toggle_key,
+            move_table_selection,
+        },
         components::{
             format::{format_brl, parse_positive_amount},
             input::InputField,
+            popup::ConfirmPopup,
             toggle::{push_form_error, render_selector},
         },
     },
@@ -270,4 +277,143 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let block = Block::default().borders(Borders::ALL).title(title);
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+// ── Key handling & form submission (impl App) ─────────────────────
+
+impl App {
+    pub(crate) async fn handle_installments_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
+        match code {
+            KeyCode::Up => {
+                move_table_selection(
+                    &mut self.installment_table_state,
+                    self.installments.len(),
+                    -1,
+                );
+            }
+            KeyCode::Down => {
+                move_table_selection(
+                    &mut self.installment_table_state,
+                    self.installments.len(),
+                    1,
+                );
+            }
+            KeyCode::Char('n') => {
+                let has_credit_account = self.accounts.iter().any(|a| a.has_credit_card);
+                let has_expense_cat = self
+                    .categories
+                    .iter()
+                    .any(|c| c.parsed_type() == CategoryType::Expense);
+                if !has_credit_account {
+                    self.status_message = Some(StatusMessage::error(
+                        "No account with credit card available",
+                    ));
+                } else if !has_expense_cat {
+                    self.status_message =
+                        Some(StatusMessage::error("Create an expense category first"));
+                } else {
+                    self.installment_form = Some(InstallmentForm::new_create());
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(ip) = self
+                    .installment_table_state
+                    .selected()
+                    .and_then(|i| self.installments.get(i))
+                {
+                    let ip_id = ip.id;
+                    let ip_desc = ip.description.clone();
+                    self.confirm_action = Some(ConfirmAction::DeleteInstallment(ip_id));
+                    self.confirm_popup = Some(ConfirmPopup::new(format!(
+                        "Delete \"{}\" and all its transactions?",
+                        ip_desc
+                    )));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub(crate) fn handle_installment_form_key(&mut self, code: KeyCode) {
+        let form = self.installment_form.as_mut().unwrap();
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                if form.active_field < InstallmentField::ALL.len() - 1 {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                InstallmentField::Description => form.description.handle_key(code),
+                InstallmentField::TotalAmount => form.total_amount.handle_key(code),
+                InstallmentField::InstallmentCount => form.installment_count.handle_key(code),
+                InstallmentField::FirstDate => form.first_date.handle_key(code),
+                InstallmentField::Account => {
+                    if is_toggle_key(code) {
+                        let len = self.accounts.iter().filter(|a| a.has_credit_card).count();
+                        cycle_index(&mut form.account_idx, len, code);
+                    }
+                }
+                InstallmentField::Category => {
+                    if is_toggle_key(code) {
+                        let len = self
+                            .categories
+                            .iter()
+                            .filter(|c| c.parsed_type() == CategoryType::Expense)
+                            .count();
+                        cycle_index(&mut form.category_idx, len, code);
+                    }
+                }
+            },
+        }
+    }
+
+    pub(crate) async fn submit_installment_form(&mut self) -> anyhow::Result<()> {
+        use crate::db::installments;
+
+        let form = self.installment_form.as_ref().unwrap();
+        let validated = match form.validate(&self.accounts, &self.categories) {
+            Ok(v) => v,
+            Err(e) => {
+                self.installment_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
+            }
+        };
+
+        installments::create_installment_purchase(
+            &self.pool,
+            validated.total_amount,
+            validated.installment_count,
+            &validated.description,
+            validated.category_id,
+            validated.account_id,
+            validated.first_date,
+        )
+        .await?;
+        info!(
+            desc = %validated.description,
+            total = %validated.total_amount,
+            count = validated.installment_count,
+            "installment purchase created"
+        );
+
+        self.installment_form = None;
+        self.input_mode = InputMode::Normal;
+        self.load_data().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn execute_delete_installment(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::installments::delete_installment_purchase(&self.pool, id).await?;
+        info!(id, "installment purchase deleted (transactions cascaded)");
+        self.load_data().await?;
+        clamp_selection(&mut self.installment_table_state, self.installments.len());
+        Ok(())
+    }
 }
