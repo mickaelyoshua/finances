@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
     let _guard = init_tracing(file_appender);
 
     let cfg = Config::parse();
-    let database_url = config::database_url();
+    let database_url = config::database_url(cfg.prod);
 
     info!("connecting to database");
     let pool = db::create_pool(&database_url).await?;
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
     // -- App init --
-    let mut app = ui::App::new(pool);
+    let mut app = ui::App::new(pool, cfg.prod);
     app.load_data().await?;
     let mut events = ui::EventHandler::new(Duration::from_millis(250));
 
