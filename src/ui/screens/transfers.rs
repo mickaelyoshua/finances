@@ -265,6 +265,25 @@ impl App {
                     )));
                 }
             }
+            KeyCode::Char('x') => {
+                let acct_names = &self.account_names;
+                match crate::export::export_transfers(
+                    &self.transfers,
+                    |id| acct_names.get(&id).cloned().unwrap_or_else(|| "?".into()),
+                ) {
+                    Ok(path) => {
+                        self.status_message = Some(StatusMessage::info(format!(
+                            "Exported {} transfers to {}",
+                            self.transfers.len(),
+                            path.display()
+                        )));
+                    }
+                    Err(e) => {
+                        self.status_message =
+                            Some(StatusMessage::error(format!("Export failed: {e}")));
+                    }
+                }
+            }
             _ => {}
         }
         Ok(())

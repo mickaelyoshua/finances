@@ -11,6 +11,7 @@ tokio = { version = "1", features = ["full"] }
 rust_decimal = { version = "1.39", features = ["db-postgres"] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
+csv = "1"
 dotenvy = "0.15"
 notify-rust = "4"
 serde = { version = "1", features = ["derive"] }

@@ -331,6 +331,32 @@ impl App {
                     )));
                 }
             }
+            KeyCode::Char('x') => {
+                let acct_names = &self.account_names;
+                let cats = &self.categories;
+                match crate::export::export_installments(
+                    &self.installments,
+                    |id| acct_names.get(&id).cloned().unwrap_or_else(|| "?".into()),
+                    |id| {
+                        cats.iter()
+                            .find(|c| c.id == id)
+                            .map(|c| c.name.clone())
+                            .unwrap_or_else(|| "?".into())
+                    },
+                ) {
+                    Ok(path) => {
+                        self.status_message = Some(StatusMessage::info(format!(
+                            "Exported {} installments to {}",
+                            self.installments.len(),
+                            path.display()
+                        )));
+                    }
+                    Err(e) => {
+                        self.status_message =
+                            Some(StatusMessage::error(format!("Export failed: {e}")));
+                    }
+                }
+            }
             _ => {}
         }
         Ok(())

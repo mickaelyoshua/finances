@@ -35,6 +35,20 @@ pub async fn list_filtered(
     Ok(rows)
 }
 
+/// Like `list_filtered` but returns ALL matching rows (no pagination).
+/// Used for CSV export.
+pub async fn list_all_filtered(
+    pool: &PgPool,
+    filters: &TransactionFilterParams,
+) -> Result<Vec<Transaction>, sqlx::Error> {
+    let mut qb = QueryBuilder::new("SELECT * FROM transactions WHERE TRUE");
+    push_filters(&mut qb, filters);
+    qb.push(" ORDER BY date DESC, id DESC");
+    let rows = qb.build_query_as::<Transaction>().fetch_all(pool).await?;
+    debug!(count = rows.len(), "list_all_filtered");
+    Ok(rows)
+}
+
 pub async fn count_filtered(
     pool: &PgPool,
     filters: &TransactionFilterParams,

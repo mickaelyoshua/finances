@@ -240,6 +240,21 @@ impl App {
                     }
                 }
             }
+            KeyCode::Char('x') => {
+                match crate::export::export_categories(&self.categories) {
+                    Ok(path) => {
+                        self.status_message = Some(StatusMessage::info(format!(
+                            "Exported {} categories to {}",
+                            self.categories.len(),
+                            path.display()
+                        )));
+                    }
+                    Err(e) => {
+                        self.status_message =
+                            Some(StatusMessage::error(format!("Export failed: {e}")));
+                    }
+                }
+            }
             _ => {}
         }
         Ok(())

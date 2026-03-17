@@ -328,6 +328,31 @@ impl App {
                     )));
                 }
             }
+            KeyCode::Char('x') => {
+                let cats = &self.categories;
+                match crate::export::export_budgets(
+                    &self.budgets,
+                    |id| {
+                        cats.iter()
+                            .find(|c| c.id == id)
+                            .map(|c| c.name.clone())
+                            .unwrap_or_else(|| "?".into())
+                    },
+                    &self.budget_spent,
+                ) {
+                    Ok(path) => {
+                        self.status_message = Some(StatusMessage::info(format!(
+                            "Exported {} budgets to {}",
+                            self.budgets.len(),
+                            path.display()
+                        )));
+                    }
+                    Err(e) => {
+                        self.status_message =
+                            Some(StatusMessage::error(format!("Export failed: {e}")));
+                    }
+                }
+            }
             _ => {}
         }
         Ok(())

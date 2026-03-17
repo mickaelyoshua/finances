@@ -681,6 +681,43 @@ impl App {
                 self.load_transactions().await?;
                 self.transaction_table_state.select(Some(0));
             }
+            KeyCode::Char('x') => {
+                let params = self
+                    .transaction_filter
+                    .to_params(&self.accounts, &self.categories);
+                match crate::db::transactions::list_all_filtered(&self.pool, &params).await {
+                    Ok(all_txns) => {
+                        let acct_names = &self.account_names;
+                        let cats = &self.categories;
+                        match crate::export::export_transactions(
+                            &all_txns,
+                            |id| acct_names.get(&id).cloned().unwrap_or_else(|| "?".into()),
+                            |id| {
+                                cats.iter()
+                                    .find(|c| c.id == id)
+                                    .map(|c| c.name.clone())
+                                    .unwrap_or_else(|| "?".into())
+                            },
+                        ) {
+                            Ok(path) => {
+                                self.status_message = Some(StatusMessage::info(format!(
+                                    "Exported {} transactions to {}",
+                                    all_txns.len(),
+                                    path.display()
+                                )));
+                            }
+                            Err(e) => {
+                                self.status_message =
+                                    Some(StatusMessage::error(format!("Export failed: {e}")));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.status_message =
+                            Some(StatusMessage::error(format!("Export failed: {e}")));
+                    }
+                }
+            }
             KeyCode::PageUp => {
                 if self.transaction_offset > 0 {
                     self.transaction_offset =

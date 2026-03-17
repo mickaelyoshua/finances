@@ -308,7 +308,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     r.created_at.format("%d-%m-%Y %H:%M"),
                 )),
                 Line::from(Span::styled(
-                    " [c] Confirm pending  [n] New  [e] Edit  [d] Deactivate",
+                    " [c] Confirm pending  [n] New  [e] Edit  [d] Deactivate  [x] Export",
                     Style::new().fg(Color::DarkGray),
                 )),
             ]
@@ -448,6 +448,32 @@ impl App {
             }
             KeyCode::Char('c') => {
                 self.confirm_recurring().await?;
+            }
+            KeyCode::Char('x') => {
+                let acct_names = &self.account_names;
+                let cats = &self.categories;
+                match crate::export::export_recurring(
+                    &self.recurring_list,
+                    |id| acct_names.get(&id).cloned().unwrap_or_else(|| "?".into()),
+                    |id| {
+                        cats.iter()
+                            .find(|c| c.id == id)
+                            .map(|c| c.name.clone())
+                            .unwrap_or_else(|| "?".into())
+                    },
+                ) {
+                    Ok(path) => {
+                        self.status_message = Some(StatusMessage::info(format!(
+                            "Exported {} recurring transactions to {}",
+                            self.recurring_list.len(),
+                            path.display()
+                        )));
+                    }
+                    Err(e) => {
+                        self.status_message =
+                            Some(StatusMessage::error(format!("Export failed: {e}")));
+                    }
+                }
             }
             _ => {}
         }

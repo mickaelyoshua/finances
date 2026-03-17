@@ -14,7 +14,8 @@ use crate::{
     ui::{
         App,
         app::{
-            ConfirmAction, InputMode, clamp_selection, is_toggle_key, move_table_selection,
+            ConfirmAction, InputMode, StatusMessage, clamp_selection, is_toggle_key,
+            move_table_selection,
         },
         components::{
             format::format_brl,
@@ -316,6 +317,21 @@ impl App {
                         self.confirm_action = Some(ConfirmAction::DeactivateAccount(acc_id));
                         self.confirm_popup =
                             Some(ConfirmPopup::new(format!("Deactivate \"{}\"?", acc_name)));
+                    }
+                }
+            }
+            KeyCode::Char('x') => {
+                match crate::export::export_accounts(&self.accounts) {
+                    Ok(path) => {
+                        self.status_message = Some(StatusMessage::info(format!(
+                            "Exported {} accounts to {}",
+                            self.accounts.len(),
+                            path.display()
+                        )));
+                    }
+                    Err(e) => {
+                        self.status_message =
+                            Some(StatusMessage::error(format!("Export failed: {e}")));
                     }
                 }
             }
