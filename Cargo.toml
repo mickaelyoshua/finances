@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 ratatui = "0.30"
 crossterm = "0.29"
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "rust_decimal", "chrono", "migrate"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "rust_decimal", "chrono", "migrate"] }
 tokio = { version = "1", features = ["full"] }
 rust_decimal = { version = "1.39", features = ["db-postgres"] }
 chrono = { version = "0.4", features = ["serde"] }
