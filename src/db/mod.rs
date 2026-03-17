@@ -41,7 +41,7 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateE
 /// Falls back to the last day of the target month when the day doesn't exist
 /// (e.g., Jan 31 + 1 month = Feb 28).
 pub(crate) fn add_months(date: NaiveDate, months: u32) -> NaiveDate {
-    let total_months = date.year() as i32 * 12 + date.month0() as i32 + months as i32;
+    let total_months = date.year() * 12 + date.month0() as i32 + months as i32;
     let year = total_months / 12;
     let month = (total_months % 12) as u32 + 1;
     let day = date.day().min(last_day_of_month(year, month));

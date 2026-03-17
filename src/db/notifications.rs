@@ -2,13 +2,13 @@ use sqlx::PgPool;
 
 use crate::models::{Notification, NotificationType};
 
-/// Insert a notification unless an unread one with the same (type, reference_id) already exists.
+/// Insert or refresh a notification.
 ///
 /// Relies on the `idx_notifications_dedup` partial unique index (covers only `read = FALSE` rows).
-/// `ON CONFLICT DO NOTHING` makes duplicate inserts a silent no-op instead of an error.
-/// Once the user marks a notification as read, the index no longer blocks it, so the next
-/// `--notify` run can create a fresh one if the condition persists.
-pub async fn insert_if_new(
+/// If an unread notification with the same (type, reference_id) already exists, the message and
+/// timestamp are updated so it stays current. Once the user marks it as read, the next run
+/// inserts a fresh one.
+pub async fn upsert(
     pool: &PgPool,
     message: &str,
     notification_type: NotificationType,
@@ -19,11 +19,33 @@ pub async fn insert_if_new(
          VALUES ($1, $2, $3)
          ON CONFLICT (notification_type, COALESCE(reference_id, 0))
              WHERE read = FALSE
-         DO NOTHING",
+         DO UPDATE SET message = EXCLUDED.message, created_at = NOW()",
     )
     .bind(message)
     .bind(notification_type.as_str())
     .bind(reference_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Mark any unread budget notifications for the given budget as read,
+/// except the current notification type. Call this before upserting a new
+/// budget notification so stale thresholds (e.g. Budget75 when now at 90%) are cleared.
+pub async fn clear_stale_budget_notifications(
+    pool: &PgPool,
+    budget_id: i32,
+    current_type: NotificationType,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE notifications SET read = TRUE
+         WHERE reference_id = $1
+           AND read = FALSE
+           AND notification_type IN ('budget_50','budget_75','budget_90','budget_100','budget_exceeded')
+           AND notification_type != $2",
+    )
+    .bind(budget_id)
+    .bind(current_type.as_str())
     .execute(pool)
     .await?;
     Ok(())

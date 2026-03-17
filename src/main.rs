@@ -43,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
         let has_entries = db::transactions::has_transactions_today(&pool, today).await?;
         if !has_entries {
             let msg = "You haven't logged any transactions today!".to_string();
-            db::notifications::insert_if_new(
+            db::notifications::upsert(
                 &pool,
                 &msg,
                 finances::models::NotificationType::NoTransactions,
@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
                 r.description,
                 ui::components::format::format_brl(r.amount),
             );
-            db::notifications::insert_if_new(
+            db::notifications::upsert(
                 &pool,
                 &msg,
                 finances::models::NotificationType::OverdueRecurring,
@@ -111,6 +111,9 @@ async fn main() -> anyhow::Result<()> {
 
             // Find the highest crossed threshold only
             if pct_u32 > 100 {
+                let ntype = finances::models::NotificationType::BudgetExceeded;
+                db::notifications::clear_stale_budget_notifications(&pool, b.id, ntype)
+                    .await?;
                 let msg = format!(
                     "Budget '{}' ({}) EXCEEDED — {}/{}",
                     cat_name,
@@ -118,17 +121,13 @@ async fn main() -> anyhow::Result<()> {
                     ui::components::format::format_brl(spent),
                     ui::components::format::format_brl(b.amount),
                 );
-                db::notifications::insert_if_new(
-                    &pool,
-                    &msg,
-                    finances::models::NotificationType::BudgetExceeded,
-                    Some(b.id),
-                )
-                .await?;
+                db::notifications::upsert(&pool, &msg, ntype, Some(b.id)).await?;
                 messages.push(msg);
             } else if let Some(&(threshold, ntype)) =
                 thresholds.iter().rev().find(|(t, _)| pct_u32 >= *t)
             {
+                db::notifications::clear_stale_budget_notifications(&pool, b.id, ntype)
+                    .await?;
                 let msg = format!(
                     "Budget '{}' ({}) reached {}% — {}/{}",
                     cat_name,
@@ -137,7 +136,7 @@ async fn main() -> anyhow::Result<()> {
                     ui::components::format::format_brl(spent),
                     ui::components::format::format_brl(b.amount),
                 );
-                db::notifications::insert_if_new(&pool, &msg, ntype, Some(b.id)).await?;
+                db::notifications::upsert(&pool, &msg, ntype, Some(b.id)).await?;
                 messages.push(msg);
             }
         }
