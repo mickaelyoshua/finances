@@ -3,7 +3,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::Line,
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
@@ -139,7 +139,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
 fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let [table_area, detail_area] =
-        Layout::vertical([Constraint::Min(5), Constraint::Length(5)]).areas(area);
+        Layout::vertical([Constraint::Min(5), Constraint::Length(6)]).areas(area);
 
     let header = Row::new(["Category", "Amount", "Period", "Spent", "%"])
         .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
@@ -217,6 +217,10 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 Line::from(format!(
                     " Created: {}",
                     b.created_at.format("%d-%m-%Y %H:%M")
+                )),
+                Line::from(Span::styled(
+                    " [n] New  [e] Edit  [d] Delete  [x] Export",
+                    Style::new().fg(Color::DarkGray),
                 )),
             ]
         }

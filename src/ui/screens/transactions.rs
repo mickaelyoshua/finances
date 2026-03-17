@@ -332,7 +332,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let [filter_area, table_area, detail_area] = Layout::vertical([
         Constraint::Length(filter_height),
         Constraint::Min(5),
-        Constraint::Length(6),
+        Constraint::Length(7),
     ])
     .areas(area);
 
@@ -422,6 +422,10 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 Line::from(format!(
                     " Created: {}",
                     txn.created_at.format("%d-%m-%Y %H:%M")
+                )),
+                Line::from(Span::styled(
+                    " [n] New  [e] Edit  [d] Delete  [f] Filter  [r] Reset  [x] Export",
+                    Style::new().fg(Color::DarkGray),
                 )),
             ]
         }

@@ -3,7 +3,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::Line,
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
@@ -185,7 +185,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let [table_area, detail_area] =
-        Layout::vertical([Constraint::Min(5), Constraint::Length(6)]).areas(area);
+        Layout::vertical([Constraint::Min(5), Constraint::Length(7)]).areas(area);
 
     let rows: Vec<Row> = app
         .accounts
@@ -261,6 +261,10 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 Line::from(format!(" {}", billing)),
                 Line::from(format!(" Payment methods: {}", methods.join(", "))),
                 Line::from(format!(" Created: {}", acc.created_at.format("%d-%m-%Y"))),
+                Line::from(Span::styled(
+                    " [n] New  [e] Edit  [d] Deactivate  [x] Export",
+                    Style::new().fg(Color::DarkGray),
+                )),
             ]
         }
         None => vec![Line::from(" No account selected.")],
