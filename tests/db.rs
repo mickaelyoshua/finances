@@ -1,5 +1,8 @@
 //! Integration tests for the DB layer. Each test gets a clean database via TRUNCATE.
 //! Tests are serialized with DB_LOCK because they share a single Postgres instance.
+//!
+//! Uses DATABASE_URL_TEST (separate `finances_test` database) so the dev database
+//! is never touched.
 
 use chrono::NaiveDate;
 use rust_decimal_macros::dec;
@@ -15,13 +18,19 @@ use finances::models::*;
 /// Global mutex to serialize DB tests (they share one database).
 static DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Acquire the lock, connect, and truncate all tables so each test starts clean.
+const DEFAULT_TEST_URL: &str = "postgres://finances:finances@localhost:5432/finances_test";
+
+/// Acquire the lock, connect to the TEST database, run migrations, and truncate
+/// all tables so each test starts clean. Never touches the dev database.
 async fn setup() -> (MutexGuard<'static, ()>, PgPool) {
     let guard = DB_LOCK.lock().await;
 
     dotenvy::dotenv().ok();
-    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let url = std::env::var("DATABASE_URL_TEST").unwrap_or_else(|_| DEFAULT_TEST_URL.to_string());
     let pool = finances::db::create_pool(&url).await.unwrap();
+
+    // Ensure schema is up to date
+    finances::db::run_migrations(&pool).await.unwrap();
 
     sqlx::query(
         "TRUNCATE transactions, transfers, credit_card_payments,
@@ -1141,7 +1150,7 @@ async fn advance_next_due_updates_date() {
 async fn insert_notification_and_list_unread() {
     let (_guard, pool) = setup().await;
 
-    notifications::insert_if_new(
+    notifications::upsert(
         &pool,
         "You haven't logged any transactions today!",
         NotificationType::NoTransactions,
@@ -1159,11 +1168,11 @@ async fn insert_notification_and_list_unread() {
 }
 
 #[tokio::test]
-async fn insert_if_new_dedup_skips_duplicate_unread() {
+async fn upsert_refreshes_existing_unread() {
     let (_guard, pool) = setup().await;
 
     // Insert twice with same type + reference_id
-    notifications::insert_if_new(
+    notifications::upsert(
         &pool,
         "Budget 'Food' reached 75%",
         NotificationType::Budget75,
@@ -1172,7 +1181,7 @@ async fn insert_if_new_dedup_skips_duplicate_unread() {
     .await
     .unwrap();
 
-    notifications::insert_if_new(
+    notifications::upsert(
         &pool,
         "Budget 'Food' reached 75% — updated amount",
         NotificationType::Budget75,
@@ -1181,17 +1190,17 @@ async fn insert_if_new_dedup_skips_duplicate_unread() {
     .await
     .unwrap();
 
-    // Only the first one should exist
+    // Still one row, but message should be updated
     let list = notifications::list_unread(&pool).await.unwrap();
     assert_eq!(list.len(), 1);
-    assert_eq!(list[0].message, "Budget 'Food' reached 75%");
+    assert_eq!(list[0].message, "Budget 'Food' reached 75% — updated amount");
 }
 
 #[tokio::test]
-async fn insert_if_new_allows_reinsert_after_read() {
+async fn upsert_allows_reinsert_after_read() {
     let (_guard, pool) = setup().await;
 
-    notifications::insert_if_new(
+    notifications::upsert(
         &pool,
         "Overdue: Netflix",
         NotificationType::OverdueRecurring,
@@ -1205,7 +1214,7 @@ async fn insert_if_new_allows_reinsert_after_read() {
     notifications::mark_read(&pool, list[0].id).await.unwrap();
 
     // Now inserting again should succeed (dedup index only covers unread)
-    notifications::insert_if_new(
+    notifications::upsert(
         &pool,
         "Overdue: Netflix — still pending",
         NotificationType::OverdueRecurring,
@@ -1223,10 +1232,10 @@ async fn insert_if_new_allows_reinsert_after_read() {
 async fn mark_read_single_notification() {
     let (_guard, pool) = setup().await;
 
-    notifications::insert_if_new(&pool, "A", NotificationType::NoTransactions, None)
+    notifications::upsert(&pool, "A", NotificationType::NoTransactions, None)
         .await
         .unwrap();
-    notifications::insert_if_new(&pool, "B", NotificationType::Budget50, Some(1))
+    notifications::upsert(&pool, "B", NotificationType::Budget50, Some(1))
         .await
         .unwrap();
 
@@ -1246,13 +1255,13 @@ async fn mark_read_single_notification() {
 async fn mark_all_read_clears_unread() {
     let (_guard, pool) = setup().await;
 
-    notifications::insert_if_new(&pool, "A", NotificationType::NoTransactions, None)
+    notifications::upsert(&pool, "A", NotificationType::NoTransactions, None)
         .await
         .unwrap();
-    notifications::insert_if_new(&pool, "B", NotificationType::Budget90, Some(1))
+    notifications::upsert(&pool, "B", NotificationType::Budget90, Some(1))
         .await
         .unwrap();
-    notifications::insert_if_new(&pool, "C", NotificationType::OverdueRecurring, Some(2))
+    notifications::upsert(&pool, "C", NotificationType::OverdueRecurring, Some(2))
         .await
         .unwrap();
 
@@ -1269,10 +1278,10 @@ async fn mark_all_read_clears_unread() {
 async fn list_unread_excludes_read_notifications() {
     let (_guard, pool) = setup().await;
 
-    notifications::insert_if_new(&pool, "Read me", NotificationType::Budget100, Some(1))
+    notifications::upsert(&pool, "Read me", NotificationType::Budget100, Some(1))
         .await
         .unwrap();
-    notifications::insert_if_new(&pool, "Keep me", NotificationType::BudgetExceeded, Some(2))
+    notifications::upsert(&pool, "Keep me", NotificationType::BudgetExceeded, Some(2))
         .await
         .unwrap();
 
@@ -1284,4 +1293,77 @@ async fn list_unread_excludes_read_notifications() {
     let list = notifications::list_unread(&pool).await.unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].message, "Keep me");
+}
+
+#[tokio::test]
+async fn clear_stale_marks_old_budget_threshold_as_read() {
+    let (_guard, pool) = setup().await;
+
+    // Budget at 75% initially
+    notifications::upsert(&pool, "at 75%", NotificationType::Budget75, Some(1))
+        .await
+        .unwrap();
+
+    // Budget climbs to 90% — clear stale before upserting
+    notifications::clear_stale_budget_notifications(&pool, 1, NotificationType::Budget90)
+        .await
+        .unwrap();
+
+    let list = notifications::list_unread(&pool).await.unwrap();
+    assert!(list.is_empty(), "old Budget75 should be marked as read");
+}
+
+#[tokio::test]
+async fn clear_stale_preserves_current_type() {
+    let (_guard, pool) = setup().await;
+
+    notifications::upsert(&pool, "at 90%", NotificationType::Budget90, Some(1))
+        .await
+        .unwrap();
+
+    // Same threshold — should NOT mark itself as read
+    notifications::clear_stale_budget_notifications(&pool, 1, NotificationType::Budget90)
+        .await
+        .unwrap();
+
+    let list = notifications::list_unread(&pool).await.unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].message, "at 90%");
+}
+
+#[tokio::test]
+async fn clear_stale_ignores_non_budget_types() {
+    let (_guard, pool) = setup().await;
+
+    // OverdueRecurring with same reference_id as a budget
+    notifications::upsert(&pool, "overdue", NotificationType::OverdueRecurring, Some(1))
+        .await
+        .unwrap();
+
+    notifications::clear_stale_budget_notifications(&pool, 1, NotificationType::Budget90)
+        .await
+        .unwrap();
+
+    let list = notifications::list_unread(&pool).await.unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].notification_type, "overdue_recurring");
+}
+
+#[tokio::test]
+async fn clear_stale_ignores_other_budgets() {
+    let (_guard, pool) = setup().await;
+
+    // Budget75 for budget_id=99
+    notifications::upsert(&pool, "other budget", NotificationType::Budget75, Some(99))
+        .await
+        .unwrap();
+
+    // Clear stale for budget_id=1
+    notifications::clear_stale_budget_notifications(&pool, 1, NotificationType::Budget90)
+        .await
+        .unwrap();
+
+    let list = notifications::list_unread(&pool).await.unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].message, "other budget");
 }
