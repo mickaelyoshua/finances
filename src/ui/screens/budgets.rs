@@ -288,10 +288,10 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 impl App {
     pub(crate) async fn handle_budgets_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
         match code {
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 move_table_selection(&mut self.budget_table_state, self.budgets.len(), -1);
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 move_table_selection(&mut self.budget_table_state, self.budgets.len(), 1);
             }
             KeyCode::Char('n') => {

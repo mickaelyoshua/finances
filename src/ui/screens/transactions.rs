@@ -608,14 +608,14 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 impl App {
     pub(crate) async fn handle_transactions_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
         match code {
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 move_table_selection(
                     &mut self.transaction_table_state,
                     self.transactions.len(),
                     -1,
                 );
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 move_table_selection(
                     &mut self.transaction_table_state,
                     self.transactions.len(),

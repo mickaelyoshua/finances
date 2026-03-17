@@ -394,14 +394,14 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 impl App {
     pub(crate) async fn handle_recurring_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
         match code {
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 move_table_selection(
                     &mut self.recurring_table_state,
                     self.recurring_list.len(),
                     -1,
                 );
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 move_table_selection(
                     &mut self.recurring_table_state,
                     self.recurring_list.len(),

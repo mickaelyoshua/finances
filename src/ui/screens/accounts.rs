@@ -283,10 +283,10 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 impl App {
     pub(crate) async fn handle_accounts_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
         match code {
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 move_table_selection(&mut self.account_table_state, self.accounts.len(), -1);
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 move_table_selection(&mut self.account_table_state, self.accounts.len(), 1);
             }
             KeyCode::Char('n') => {

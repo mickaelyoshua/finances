@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::Local;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::TableState;
 use rust_decimal::Decimal;
 use sqlx::PgPool;
@@ -180,6 +180,9 @@ pub struct App {
     pub notification_selection: usize,
 
     pub status_message: Option<StatusMessage>,
+
+    /// Tracks pending 'g' keypress for vim-style `gg` (jump to first row).
+    pub pending_g: bool,
 }
 
 impl App {
@@ -236,6 +239,7 @@ impl App {
             notification_selection: 0,
 
             status_message: None,
+            pending_g: false,
         }
     }
 
@@ -361,6 +365,35 @@ impl App {
     // ── Normal-mode dispatch ──────────────────────────────────────────
 
     async fn handle_normal_key(&mut self, key: KeyEvent) -> anyhow::Result<()> {
+        // Handle pending 'g' for gg (jump to first row)
+        if self.pending_g {
+            self.pending_g = false;
+            if key.code == KeyCode::Char('g') {
+                self.jump_to_row(0);
+                return Ok(());
+            }
+            // Not 'g' — fall through to process the key normally
+        }
+
+        // Ctrl+d / Ctrl+u — half-page scroll (10 rows)
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('d') => {
+                    if let Some((state, len)) = self.active_table_state() {
+                        move_table_selection(state, len, 10);
+                    }
+                    return Ok(());
+                }
+                KeyCode::Char('u') => {
+                    if let Some((state, len)) = self.active_table_state() {
+                        move_table_selection(state, len, -10);
+                    }
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
         match key.code {
             KeyCode::Char('q') => self.running = false,
             KeyCode::Char(c @ '1'..='9') => {
@@ -369,8 +402,12 @@ impl App {
                     self.screen = screen;
                 }
             }
-            KeyCode::Left => self.screen = self.screen.prev(),
-            KeyCode::Right => self.screen = self.screen.next(),
+            KeyCode::Left | KeyCode::Char('h') => self.screen = self.screen.prev(),
+            KeyCode::Right | KeyCode::Char('l') => self.screen = self.screen.next(),
+            KeyCode::Char('g') => self.pending_g = true,
+            KeyCode::Char('G') => {
+                self.jump_to_last_row();
+            }
             _ => match self.screen {
                 Screen::Dashboard => self.handle_dashboard_key(key.code).await?,
                 Screen::Accounts => self.handle_accounts_key(key.code).await?,
@@ -384,6 +421,46 @@ impl App {
             },
         }
         Ok(())
+    }
+
+    /// Returns a mutable reference to the active screen's table state and its list length.
+    /// Dashboard uses notification_selection (not TableState), so returns None.
+    fn active_table_state(&mut self) -> Option<(&mut TableState, usize)> {
+        match self.screen {
+            Screen::Dashboard => None,
+            Screen::Transactions => Some((&mut self.transaction_table_state, self.transactions.len())),
+            Screen::Accounts => Some((&mut self.account_table_state, self.accounts.len())),
+            Screen::Budgets => Some((&mut self.budget_table_state, self.budgets.len())),
+            Screen::Categories => Some((&mut self.category_table_state, self.categories.len())),
+            Screen::Installments => Some((&mut self.installment_table_state, self.installments.len())),
+            Screen::Recurring => Some((&mut self.recurring_table_state, self.recurring_list.len())),
+            Screen::Transfers => Some((&mut self.transfer_table_state, self.transfers.len())),
+            Screen::CreditCardPayments => Some((&mut self.cc_payment_table_state, self.cc_payments.len())),
+        }
+    }
+
+    fn jump_to_row(&mut self, row: usize) {
+        if self.screen == Screen::Dashboard {
+            if !self.notifications.is_empty() {
+                self.notification_selection = row.min(self.notifications.len() - 1);
+            }
+        } else if let Some((state, len)) = self.active_table_state() {
+            if len > 0 {
+                state.select(Some(row.min(len - 1)));
+            }
+        }
+    }
+
+    fn jump_to_last_row(&mut self) {
+        if self.screen == Screen::Dashboard {
+            if !self.notifications.is_empty() {
+                self.notification_selection = self.notifications.len() - 1;
+            }
+        } else if let Some((state, len)) = self.active_table_state() {
+            if len > 0 {
+                state.select(Some(len - 1));
+            }
+        }
     }
 
     // ── Editing-mode dispatch ─────────────────────────────────────────
@@ -449,12 +526,12 @@ impl App {
             return Ok(());
         }
         match code {
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 if self.notification_selection > 0 {
                     self.notification_selection -= 1;
                 }
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 let max = self.notifications.len().saturating_sub(1);
                 if self.notification_selection < max {
                     self.notification_selection += 1;
