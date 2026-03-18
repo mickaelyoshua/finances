@@ -16,7 +16,7 @@ use crate::{
     ui::{
         App,
         app::{
-            ConfirmAction, InputMode, StatusMessage, PAGE_SIZE, clamp_selection, cycle_index,
+            ConfirmAction, InputMode, PAGE_SIZE, StatusMessage, clamp_selection, cycle_index,
             is_toggle_key, move_table_selection,
         },
         components::{
@@ -377,13 +377,17 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         ],
     )
     .header(header)
-    .block(Block::default().borders(Borders::ALL).title(if app.transaction_count > 0 {
-        let start = app.transaction_offset + 1;
-        let end = app.transaction_offset + app.transactions.len() as u64;
-        format!("Transactions ({start}-{end} of {})", app.transaction_count)
-    } else {
-        "Transactions (0)".to_string()
-    }))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(if app.transaction_count > 0 {
+                let start = app.transaction_offset + 1;
+                let end = app.transaction_offset + app.transactions.len() as u64;
+                format!("Transactions ({start}-{end} of {})", app.transaction_count)
+            } else {
+                "Transactions (0)".to_string()
+            }),
+    )
     .row_highlight_style(
         Style::new()
             .bg(Color::DarkGray)
@@ -442,13 +446,21 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 fn render_filter_bar(frame: &mut Frame, area: Rect, app: &mut App) {
     let filter = &app.transaction_filter;
     let is_filtering = app.input_mode == InputMode::Filtering;
-    let border_color = if is_filtering { Color::Yellow } else { Color::DarkGray };
+    let border_color = if is_filtering {
+        Color::Yellow
+    } else {
+        Color::DarkGray
+    };
 
     // Row 1: DateFrom | DateTo | Description (text inputs)
     let mut row1: Vec<Span> = Vec::new();
-    for (i, field) in [FilterField::DateFrom, FilterField::DateTo, FilterField::Description]
-        .iter()
-        .enumerate()
+    for (i, field) in [
+        FilterField::DateFrom,
+        FilterField::DateTo,
+        FilterField::Description,
+    ]
+    .iter()
+    .enumerate()
     {
         let idx = FilterField::ALL.iter().position(|f| f == field).unwrap();
         let active = is_filtering && filter.active_field == idx;
@@ -510,8 +522,14 @@ fn render_filter_bar(frame: &mut Frame, area: Rect, app: &mut App) {
                 },
             ),
             FilterField::PaymentMethod => {
-                const LABELS: [&str; 6] =
-                    ["PIX", "Credit Card", "Debit Card", "Cash", "Boleto", "Transfer"];
+                const LABELS: [&str; 6] = [
+                    "PIX",
+                    "Credit Card",
+                    "Debit Card",
+                    "Cash",
+                    "Boleto",
+                    "Transfer",
+                ];
                 (
                     "Pay",
                     filter
@@ -667,10 +685,9 @@ impl App {
                         let txn_id = txn.id;
                         let txn_desc = txn.description.clone();
                         self.confirm_action = Some(ConfirmAction::DeleteTransaction(txn_id));
-                        self.confirm_popup =
-                            Some(crate::ui::components::popup::ConfirmPopup::new(format!(
-                                "Delete \"{txn_desc}\"?"
-                            )));
+                        self.confirm_popup = Some(crate::ui::components::popup::ConfirmPopup::new(
+                            format!("Delete \"{txn_desc}\"?"),
+                        ));
                     }
                 }
             }
@@ -724,8 +741,7 @@ impl App {
             }
             KeyCode::PageUp => {
                 if self.transaction_offset > 0 {
-                    self.transaction_offset =
-                        self.transaction_offset.saturating_sub(PAGE_SIZE);
+                    self.transaction_offset = self.transaction_offset.saturating_sub(PAGE_SIZE);
                     self.load_transactions().await?;
                     self.transaction_table_state.select(Some(0));
                 }
@@ -877,39 +893,28 @@ impl App {
             }
         };
 
+        let params = transactions::TransactionParams {
+            amount: validated.amount,
+            description: validated.description,
+            category_id: validated.category_id,
+            account_id: validated.account_id,
+            transaction_type: validated.transaction_type,
+            payment_method: validated.payment_method,
+            date: validated.date,
+        };
+
         match form.mode {
             TransactionFormMode::Create => {
-                transactions::create_transaction(
-                    &self.pool,
-                    validated.amount,
-                    &validated.description,
-                    validated.category_id,
-                    validated.account_id,
-                    validated.transaction_type,
-                    validated.payment_method,
-                    validated.date,
-                )
-                .await?;
+                transactions::create_transaction(&self.pool, &params).await?;
                 info!(
-                    desc = %validated.description,
-                    amount = %validated.amount,
+                    desc = %params.description,
+                    amount = %params.amount,
                     "transaction created"
                 );
             }
             TransactionFormMode::Edit(id) => {
-                transactions::update_transaction(
-                    &self.pool,
-                    id,
-                    validated.amount,
-                    &validated.description,
-                    validated.category_id,
-                    validated.account_id,
-                    validated.transaction_type,
-                    validated.payment_method,
-                    validated.date,
-                )
-                .await?;
-                info!(id, desc = %validated.description, "transaction updated");
+                transactions::update_transaction(&self.pool, id, &params).await?;
+                info!(id, desc = %params.description, "transaction updated");
             }
         }
 

@@ -11,9 +11,7 @@ use rust_decimal::Decimal;
 use tracing::info;
 
 use crate::{
-    models::{
-        Account, Category, Frequency, PaymentMethod, RecurringTransaction, TransactionType,
-    },
+    models::{Account, Category, Frequency, PaymentMethod, RecurringTransaction, TransactionType},
     ui::{
         App,
         app::{
@@ -162,7 +160,11 @@ impl RecurringForm {
         }
     }
 
-    pub fn new_edit(r: &RecurringTransaction, accounts: &[Account], categories: &[Category]) -> Self {
+    pub fn new_edit(
+        r: &RecurringTransaction,
+        accounts: &[Account],
+        categories: &[Category],
+    ) -> Self {
         let txn_type = r.parsed_type();
 
         let account_idx = accounts
@@ -229,8 +231,15 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let today = Local::now().date_naive();
 
-    let header = Row::new(["Description", "Amount", "Frequency", "Next Due", "Account", "Category"])
-        .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let header = Row::new([
+        "Description",
+        "Amount",
+        "Frequency",
+        "Next Due",
+        "Account",
+        "Category",
+    ])
+    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .recurring_list
@@ -269,7 +278,11 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         ],
     )
     .header(header)
-    .block(Block::default().borders(Borders::ALL).title("Recurring Transactions"))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Recurring Transactions"),
+    )
     .row_highlight_style(
         Style::new()
             .bg(Color::DarkGray)
@@ -287,7 +300,11 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             let account_name = app.account_name(r.account_id);
             let category_name = app.category_name(r.category_id);
 
-            let pending = if r.next_due <= today { " (PENDING)" } else { "" };
+            let pending = if r.next_due <= today {
+                " (PENDING)"
+            } else {
+                ""
+            };
 
             vec![
                 Line::from(format!(
@@ -553,37 +570,25 @@ impl App {
             }
         };
 
+        let params = recurring::RecurringParams {
+            amount: validated.amount,
+            description: validated.description,
+            category_id: validated.category_id,
+            account_id: validated.account_id,
+            transaction_type: validated.transaction_type,
+            payment_method: validated.payment_method,
+            frequency: validated.frequency,
+            next_due: validated.next_due,
+        };
+
         match form.mode {
             RecurringFormMode::Create => {
-                recurring::create_recurring(
-                    &self.pool,
-                    validated.amount,
-                    &validated.description,
-                    validated.category_id,
-                    validated.account_id,
-                    validated.transaction_type,
-                    validated.payment_method,
-                    validated.frequency,
-                    validated.next_due,
-                )
-                .await?;
-                info!(desc = %validated.description, "recurring transaction created");
+                recurring::create_recurring(&self.pool, &params).await?;
+                info!(desc = %params.description, "recurring transaction created");
             }
             RecurringFormMode::Edit(id) => {
-                recurring::update_recurring(
-                    &self.pool,
-                    id,
-                    validated.amount,
-                    &validated.description,
-                    validated.category_id,
-                    validated.account_id,
-                    validated.transaction_type,
-                    validated.payment_method,
-                    validated.frequency,
-                    validated.next_due,
-                )
-                .await?;
-                info!(id, desc = %validated.description, "recurring transaction updated");
+                recurring::update_recurring(&self.pool, id, &params).await?;
+                info!(id, desc = %params.description, "recurring transaction updated");
             }
         }
 

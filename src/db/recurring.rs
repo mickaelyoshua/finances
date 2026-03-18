@@ -4,6 +4,17 @@ use sqlx::PgPool;
 
 use crate::models::{Frequency, PaymentMethod, RecurringTransaction, TransactionType};
 
+pub struct RecurringParams {
+    pub amount: Decimal,
+    pub description: String,
+    pub category_id: i32,
+    pub account_id: i32,
+    pub transaction_type: TransactionType,
+    pub payment_method: PaymentMethod,
+    pub frequency: Frequency,
+    pub next_due: NaiveDate,
+}
+
 pub async fn list_recurring(pool: &PgPool) -> Result<Vec<RecurringTransaction>, sqlx::Error> {
     sqlx::query_as::<_, RecurringTransaction>(
         "SELECT * FROM recurring_transactions WHERE active = TRUE ORDER BY next_due",
@@ -26,14 +37,7 @@ pub async fn list_pending(
 
 pub async fn create_recurring(
     pool: &PgPool,
-    amount: Decimal,
-    description: &str,
-    category_id: i32,
-    account_id: i32,
-    transaction_type: TransactionType,
-    payment_method: PaymentMethod,
-    frequency: Frequency,
-    next_due: NaiveDate,
+    params: &RecurringParams,
 ) -> Result<RecurringTransaction, sqlx::Error> {
     sqlx::query_as::<_, RecurringTransaction>(
         "INSERT INTO recurring_transactions
@@ -41,14 +45,14 @@ pub async fn create_recurring(
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *",
     )
-    .bind(amount)
-    .bind(description)
-    .bind(category_id)
-    .bind(account_id)
-    .bind(transaction_type.as_str())
-    .bind(payment_method.as_str())
-    .bind(frequency.as_str())
-    .bind(next_due)
+    .bind(params.amount)
+    .bind(&params.description)
+    .bind(params.category_id)
+    .bind(params.account_id)
+    .bind(params.transaction_type.as_str())
+    .bind(params.payment_method.as_str())
+    .bind(params.frequency.as_str())
+    .bind(params.next_due)
     .fetch_one(pool)
     .await
 }
@@ -69,14 +73,7 @@ pub async fn advance_next_due(
 pub async fn update_recurring(
     pool: &PgPool,
     id: i32,
-    amount: Decimal,
-    description: &str,
-    category_id: i32,
-    account_id: i32,
-    transaction_type: TransactionType,
-    payment_method: PaymentMethod,
-    frequency: Frequency,
-    next_due: NaiveDate,
+    params: &RecurringParams,
 ) -> Result<RecurringTransaction, sqlx::Error> {
     sqlx::query_as::<_, RecurringTransaction>(
         "UPDATE recurring_transactions
@@ -86,14 +83,14 @@ pub async fn update_recurring(
          RETURNING *",
     )
     .bind(id)
-    .bind(amount)
-    .bind(description)
-    .bind(category_id)
-    .bind(account_id)
-    .bind(transaction_type.as_str())
-    .bind(payment_method.as_str())
-    .bind(frequency.as_str())
-    .bind(next_due)
+    .bind(params.amount)
+    .bind(&params.description)
+    .bind(params.category_id)
+    .bind(params.account_id)
+    .bind(params.transaction_type.as_str())
+    .bind(params.payment_method.as_str())
+    .bind(params.frequency.as_str())
+    .bind(params.next_due)
     .fetch_one(pool)
     .await
 }

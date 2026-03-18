@@ -5,6 +5,7 @@
 //! is never touched.
 
 use chrono::NaiveDate;
+use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use sqlx::PgPool;
 use tokio::sync::MutexGuard;
@@ -54,22 +55,61 @@ fn date(y: i32, m: u32, d: u32) -> NaiveDate {
 async fn make_checking(pool: &PgPool, name: &str) -> Account {
     accounts::create_account(
         pool,
-        name,
-        AccountType::Checking,
-        true,
-        Some(dec!(5000)),
-        Some(10),
-        Some(20),
-        true,
+        &accounts::AccountParams {
+            name: name.to_string(),
+            account_type: AccountType::Checking,
+            has_credit_card: true,
+            credit_limit: Some(dec!(5000)),
+            billing_day: Some(10),
+            due_day: Some(20),
+            has_debit_card: true,
+        },
     )
     .await
     .unwrap()
 }
 
 async fn make_cash(pool: &PgPool) -> Account {
-    accounts::create_account(pool, "Cash", AccountType::Cash, false, None, None, None, false)
-        .await
-        .unwrap()
+    accounts::create_account(
+        pool,
+        &accounts::AccountParams {
+            name: "Cash".to_string(),
+            account_type: AccountType::Cash,
+            has_credit_card: false,
+            credit_limit: None,
+            billing_day: None,
+            due_day: None,
+            has_debit_card: false,
+        },
+    )
+    .await
+    .unwrap()
+}
+
+async fn make_txn(
+    pool: &PgPool,
+    amount: Decimal,
+    desc: &str,
+    cat_id: i32,
+    acc_id: i32,
+    txn_type: TransactionType,
+    method: PaymentMethod,
+    d: NaiveDate,
+) -> Transaction {
+    transactions::create_transaction(
+        pool,
+        &transactions::TransactionParams {
+            amount,
+            description: desc.to_string(),
+            category_id: cat_id,
+            account_id: acc_id,
+            transaction_type: txn_type,
+            payment_method: method,
+            date: d,
+        },
+    )
+    .await
+    .unwrap()
 }
 
 async fn make_expense_category(pool: &PgPool, name: &str) -> Category {
@@ -124,13 +164,15 @@ async fn update_account_changes_fields() {
     let updated = accounts::update_account(
         &pool,
         acc.id,
-        "Nu Renamed",
-        AccountType::Checking,
-        false,
-        None,
-        None,
-        None,
-        false,
+        &accounts::AccountParams {
+            name: "Nu Renamed".to_string(),
+            account_type: AccountType::Checking,
+            has_credit_card: false,
+            credit_limit: None,
+            billing_day: None,
+            due_day: None,
+            has_debit_card: false,
+        },
     )
     .await
     .unwrap();
@@ -153,18 +195,10 @@ async fn account_has_references_true_with_transaction() {
     let acc = make_checking(&pool, "Nubank").await;
     let cat = make_expense_category(&pool, "Food").await;
 
-    transactions::create_transaction(
-        &pool,
-        dec!(50),
-        "Lunch",
-        cat.id,
-        acc.id,
-        TransactionType::Expense,
-        PaymentMethod::Pix,
-        date(2026, 3, 13),
-    )
-    .await
-    .unwrap();
+    make_txn(
+        &pool, dec!(50), "Lunch", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 13),
+    ).await;
 
     assert!(accounts::has_references(&pool, acc.id).await.unwrap());
 }
@@ -241,18 +275,10 @@ async fn category_has_references_true_with_transaction() {
     let acc = make_checking(&pool, "Nubank").await;
     let cat = make_expense_category(&pool, "Food").await;
 
-    transactions::create_transaction(
-        &pool,
-        dec!(10),
-        "Test",
-        cat.id,
-        acc.id,
-        TransactionType::Expense,
-        PaymentMethod::Pix,
-        date(2026, 3, 1),
-    )
-    .await
-    .unwrap();
+    make_txn(
+        &pool, dec!(10), "Test", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
+    ).await;
 
     assert!(categories::has_references(&pool, cat.id).await.unwrap());
 }
@@ -267,18 +293,10 @@ async fn create_transaction_returns_row() {
     let acc = make_checking(&pool, "Nubank").await;
     let cat = make_expense_category(&pool, "Food").await;
 
-    let txn = transactions::create_transaction(
-        &pool,
-        dec!(99.90),
-        "Supermarket",
-        cat.id,
-        acc.id,
-        TransactionType::Expense,
-        PaymentMethod::Debit,
-        date(2026, 3, 10),
-    )
-    .await
-    .unwrap();
+    let txn = make_txn(
+        &pool, dec!(99.90), "Supermarket", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Debit, date(2026, 3, 10),
+    ).await;
 
     assert_eq!(txn.amount, dec!(99.90));
     assert_eq!(txn.description, "Supermarket");
@@ -295,18 +313,10 @@ async fn list_transactions_ordered_desc() {
     let cat = make_expense_category(&pool, "Food").await;
 
     for day in [1, 5, 10] {
-        transactions::create_transaction(
-            &pool,
-            dec!(10),
-            &format!("Day {day}"),
-            cat.id,
-            acc.id,
-            TransactionType::Expense,
-            PaymentMethod::Pix,
-            date(2026, 3, day),
-        )
-        .await
-        .unwrap();
+        make_txn(
+            &pool, dec!(10), &format!("Day {day}"), cat.id, acc.id,
+            TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, day),
+        ).await;
     }
 
     let filters = transactions::TransactionFilterParams::default();
@@ -323,18 +333,10 @@ async fn list_by_date_range_filters() {
     let cat = make_expense_category(&pool, "Food").await;
 
     for day in [1, 5, 10, 20] {
-        transactions::create_transaction(
-            &pool,
-            dec!(10),
-            "test",
-            cat.id,
-            acc.id,
-            TransactionType::Expense,
-            PaymentMethod::Pix,
-            date(2026, 3, day),
-        )
-        .await
-        .unwrap();
+        make_txn(
+            &pool, dec!(10), "test", cat.id, acc.id,
+            TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, day),
+        ).await;
     }
 
     let filters = transactions::TransactionFilterParams {
@@ -355,29 +357,23 @@ async fn update_transaction_changes_fields() {
     let acc = make_checking(&pool, "Nubank").await;
     let cat = make_expense_category(&pool, "Food").await;
 
-    let txn = transactions::create_transaction(
-        &pool,
-        dec!(10),
-        "Old",
-        cat.id,
-        acc.id,
-        TransactionType::Expense,
-        PaymentMethod::Pix,
-        date(2026, 3, 1),
-    )
-    .await
-    .unwrap();
+    let txn = make_txn(
+        &pool, dec!(10), "Old", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
+    ).await;
 
     let updated = transactions::update_transaction(
         &pool,
         txn.id,
-        dec!(25),
-        "New",
-        cat.id,
-        acc.id,
-        TransactionType::Income,
-        PaymentMethod::Boleto,
-        date(2026, 3, 5),
+        &transactions::TransactionParams {
+            amount: dec!(25),
+            description: "New".to_string(),
+            category_id: cat.id,
+            account_id: acc.id,
+            transaction_type: TransactionType::Income,
+            payment_method: PaymentMethod::Boleto,
+            date: date(2026, 3, 5),
+        },
     )
     .await
     .unwrap();
@@ -395,18 +391,10 @@ async fn delete_transaction_removes_row() {
     let acc = make_checking(&pool, "Nubank").await;
     let cat = make_expense_category(&pool, "Food").await;
 
-    let txn = transactions::create_transaction(
-        &pool,
-        dec!(10),
-        "test",
-        cat.id,
-        acc.id,
-        TransactionType::Expense,
-        PaymentMethod::Pix,
-        date(2026, 3, 1),
-    )
-    .await
-    .unwrap();
+    let txn = make_txn(
+        &pool, dec!(10), "test", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
+    ).await;
 
     transactions::delete_transaction(&pool, txn.id).await.unwrap();
 
@@ -421,18 +409,10 @@ async fn has_transactions_today_true() {
     let acc = make_checking(&pool, "Nubank").await;
     let cat = make_expense_category(&pool, "Food").await;
 
-    transactions::create_transaction(
-        &pool,
-        dec!(10),
-        "test",
-        cat.id,
-        acc.id,
-        TransactionType::Expense,
-        PaymentMethod::Pix,
-        date(2026, 3, 13),
-    )
-    .await
-    .unwrap();
+    make_txn(
+        &pool, dec!(10), "test", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 13),
+    ).await;
 
     assert!(transactions::has_transactions_today(&pool, date(2026, 3, 13)).await.unwrap());
 }
@@ -451,20 +431,20 @@ async fn sum_expenses_by_category_sums_only_expenses() {
     let income_cat = make_income_category(&pool, "Salary").await;
 
     // Two expenses in Food
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(30), "a", cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
-    ).await.unwrap();
-    transactions::create_transaction(
+    ).await;
+    make_txn(
         &pool, dec!(20), "b", cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 5),
-    ).await.unwrap();
+    ).await;
 
     // An income in a different category (should not count)
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(1000), "salary", income_cat.id, acc.id,
         TransactionType::Income, PaymentMethod::Transfer, date(2026, 3, 1),
-    ).await.unwrap();
+    ).await;
 
     let sum = transactions::sum_expenses_by_category(
         &pool, cat.id, date(2026, 3, 1), date(2026, 3, 31),
@@ -485,16 +465,16 @@ async fn balance_income_minus_expense() {
     let inc_cat = make_income_category(&pool, "Salary").await;
 
     // Income R$1000 via pix
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(1000), "salary", inc_cat.id, acc.id,
         TransactionType::Income, PaymentMethod::Pix, date(2026, 3, 1),
-    ).await.unwrap();
+    ).await;
 
     // Expense R$200 via debit
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(200), "grocery", exp_cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Debit, date(2026, 3, 2),
-    ).await.unwrap();
+    ).await;
 
     let balance = accounts::compute_balance(&pool, acc.id).await.unwrap();
     assert_eq!(balance, dec!(800));
@@ -508,16 +488,16 @@ async fn balance_excludes_credit_transactions() {
     let inc_cat = make_income_category(&pool, "Salary").await;
 
     // Income R$1000 via pix (counts toward checking)
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(1000), "salary", inc_cat.id, acc.id,
         TransactionType::Income, PaymentMethod::Pix, date(2026, 3, 1),
-    ).await.unwrap();
+    ).await;
 
     // Credit expense R$300 (does NOT reduce checking balance)
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(300), "credit purchase", cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Credit, date(2026, 3, 2),
-    ).await.unwrap();
+    ).await;
 
     let balance = accounts::compute_balance(&pool, acc.id).await.unwrap();
     assert_eq!(balance, dec!(1000)); // credit expense excluded
@@ -534,10 +514,10 @@ async fn balance_includes_transfers() {
     let inc_cat = make_income_category(&pool, "Salary").await;
 
     // Give acc_a some money
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(1000), "salary", inc_cat.id, acc_a.id,
         TransactionType::Income, PaymentMethod::Pix, date(2026, 3, 1),
-    ).await.unwrap();
+    ).await;
 
     // Transfer R$400 from A to B
     transfers::create_transfer(&pool, acc_a.id, acc_b.id, dec!(400), "test", date(2026, 3, 2))
@@ -558,16 +538,16 @@ async fn balance_deducts_credit_card_payments() {
     let exp_cat = make_expense_category(&pool, "Food").await;
 
     // Income R$1000
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(1000), "salary", inc_cat.id, acc.id,
         TransactionType::Income, PaymentMethod::Pix, date(2026, 3, 1),
-    ).await.unwrap();
+    ).await;
 
     // Credit expense R$300
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(300), "credit buy", exp_cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Credit, date(2026, 3, 2),
-    ).await.unwrap();
+    ).await;
 
     // Pay credit card bill R$300
     credit_card_payments::create_payment(&pool, acc.id, dec!(300), date(2026, 3, 20), "pay bill")
@@ -589,15 +569,15 @@ async fn compute_all_balances_returns_all_active() {
     let acc_b = make_cash(&pool).await;
     let inc_cat = make_income_category(&pool, "Salary").await;
 
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(500), "s", inc_cat.id, acc_a.id,
         TransactionType::Income, PaymentMethod::Pix, date(2026, 3, 1),
-    ).await.unwrap();
+    ).await;
 
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(100), "cash", inc_cat.id, acc_b.id,
         TransactionType::Income, PaymentMethod::Cash, date(2026, 3, 1),
-    ).await.unwrap();
+    ).await;
 
     let all = accounts::compute_all_balances(&pool).await.unwrap();
     assert_eq!(all.len(), 2);
@@ -706,16 +686,16 @@ async fn compute_all_spending_respects_period() {
         .await.unwrap();
 
     // Expense in March
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(150), "groceries", cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 5),
-    ).await.unwrap();
+    ).await;
 
     // Expense in February (outside monthly range for March)
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(200), "old groceries", cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 2, 15),
-    ).await.unwrap();
+    ).await;
 
     let today = date(2026, 3, 13);
     let (weekly_start, _) = BudgetPeriod::Weekly.date_range(today);
@@ -814,9 +794,17 @@ async fn create_recurring_returns_row() {
     let cat = make_expense_category(&pool, "Subscriptions").await;
 
     let r = recurring::create_recurring(
-        &pool, dec!(29.90), "Netflix", cat.id, acc.id,
-        TransactionType::Expense, PaymentMethod::Credit, Frequency::Monthly,
-        date(2026, 4, 1),
+        &pool,
+        &recurring::RecurringParams {
+            amount: dec!(29.90),
+            description: "Netflix".to_string(),
+            category_id: cat.id,
+            account_id: acc.id,
+            transaction_type: TransactionType::Expense,
+            payment_method: PaymentMethod::Credit,
+            frequency: Frequency::Monthly,
+            next_due: date(2026, 4, 1),
+        },
     ).await.unwrap();
 
     assert_eq!(r.amount, dec!(29.90));
@@ -833,16 +821,32 @@ async fn list_pending_filters_by_date() {
 
     // Due yesterday (pending)
     recurring::create_recurring(
-        &pool, dec!(30), "A", cat.id, acc.id,
-        TransactionType::Expense, PaymentMethod::Credit, Frequency::Monthly,
-        date(2026, 3, 12),
+        &pool,
+        &recurring::RecurringParams {
+            amount: dec!(30),
+            description: "A".to_string(),
+            category_id: cat.id,
+            account_id: acc.id,
+            transaction_type: TransactionType::Expense,
+            payment_method: PaymentMethod::Credit,
+            frequency: Frequency::Monthly,
+            next_due: date(2026, 3, 12),
+        },
     ).await.unwrap();
 
     // Due tomorrow (not pending)
     recurring::create_recurring(
-        &pool, dec!(30), "B", cat.id, acc.id,
-        TransactionType::Expense, PaymentMethod::Credit, Frequency::Monthly,
-        date(2026, 3, 14),
+        &pool,
+        &recurring::RecurringParams {
+            amount: dec!(30),
+            description: "B".to_string(),
+            category_id: cat.id,
+            account_id: acc.id,
+            transaction_type: TransactionType::Expense,
+            payment_method: PaymentMethod::Credit,
+            frequency: Frequency::Monthly,
+            next_due: date(2026, 3, 14),
+        },
     ).await.unwrap();
 
     let pending = recurring::list_pending(&pool, date(2026, 3, 13)).await.unwrap();
@@ -857,15 +861,32 @@ async fn update_recurring_changes_fields() {
     let cat = make_expense_category(&pool, "Subscriptions").await;
 
     let r = recurring::create_recurring(
-        &pool, dec!(30), "Old", cat.id, acc.id,
-        TransactionType::Expense, PaymentMethod::Credit, Frequency::Monthly,
-        date(2026, 4, 1),
+        &pool,
+        &recurring::RecurringParams {
+            amount: dec!(30),
+            description: "Old".to_string(),
+            category_id: cat.id,
+            account_id: acc.id,
+            transaction_type: TransactionType::Expense,
+            payment_method: PaymentMethod::Credit,
+            frequency: Frequency::Monthly,
+            next_due: date(2026, 4, 1),
+        },
     ).await.unwrap();
 
     let updated = recurring::update_recurring(
-        &pool, r.id, dec!(50), "New", cat.id, acc.id,
-        TransactionType::Expense, PaymentMethod::Pix, Frequency::Weekly,
-        date(2026, 5, 1),
+        &pool,
+        r.id,
+        &recurring::RecurringParams {
+            amount: dec!(50),
+            description: "New".to_string(),
+            category_id: cat.id,
+            account_id: acc.id,
+            transaction_type: TransactionType::Expense,
+            payment_method: PaymentMethod::Pix,
+            frequency: Frequency::Weekly,
+            next_due: date(2026, 5, 1),
+        },
     ).await.unwrap();
 
     assert_eq!(updated.amount, dec!(50));
@@ -882,9 +903,17 @@ async fn deactivate_recurring_hides_from_list() {
     let cat = make_expense_category(&pool, "Subscriptions").await;
 
     let r = recurring::create_recurring(
-        &pool, dec!(30), "Netflix", cat.id, acc.id,
-        TransactionType::Expense, PaymentMethod::Credit, Frequency::Monthly,
-        date(2026, 4, 1),
+        &pool,
+        &recurring::RecurringParams {
+            amount: dec!(30),
+            description: "Netflix".to_string(),
+            category_id: cat.id,
+            account_id: acc.id,
+            transaction_type: TransactionType::Expense,
+            payment_method: PaymentMethod::Credit,
+            frequency: Frequency::Monthly,
+            next_due: date(2026, 4, 1),
+        },
     ).await.unwrap();
 
     recurring::deactivate_recurring(&pool, r.id).await.unwrap();
@@ -904,10 +933,10 @@ async fn count_filtered_matches_list_len() {
     let cat = make_expense_category(&pool, "Food").await;
 
     for day in [1, 5, 10] {
-        transactions::create_transaction(
+        make_txn(
             &pool, dec!(10), &format!("Day {day}"), cat.id, acc.id,
             TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, day),
-        ).await.unwrap();
+        ).await;
     }
 
     let filters = transactions::TransactionFilterParams::default();
@@ -924,14 +953,14 @@ async fn filter_by_description_ilike() {
     let acc = make_checking(&pool, "Nubank").await;
     let cat = make_expense_category(&pool, "Food").await;
 
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(10), "Supermarket groceries", cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
-    ).await.unwrap();
-    transactions::create_transaction(
+    ).await;
+    make_txn(
         &pool, dec!(20), "Restaurant dinner", cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 2),
-    ).await.unwrap();
+    ).await;
 
     let filters = transactions::TransactionFilterParams {
         description: Some("supermarket".into()), // case-insensitive partial match
@@ -950,14 +979,14 @@ async fn filter_by_account_id() {
     let acc_b = make_checking(&pool, "Inter").await;
     let cat = make_expense_category(&pool, "Food").await;
 
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(10), "Nubank txn", cat.id, acc_a.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
-    ).await.unwrap();
-    transactions::create_transaction(
+    ).await;
+    make_txn(
         &pool, dec!(20), "Inter txn", cat.id, acc_b.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 2),
-    ).await.unwrap();
+    ).await;
 
     let filters = transactions::TransactionFilterParams {
         account_id: Some(acc_b.id),
@@ -976,14 +1005,14 @@ async fn filter_by_transaction_type() {
     let exp_cat = make_expense_category(&pool, "Food").await;
     let inc_cat = make_income_category(&pool, "Salary").await;
 
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(50), "expense", exp_cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
-    ).await.unwrap();
-    transactions::create_transaction(
+    ).await;
+    make_txn(
         &pool, dec!(1000), "income", inc_cat.id, acc.id,
         TransactionType::Income, PaymentMethod::Transfer, date(2026, 3, 1),
-    ).await.unwrap();
+    ).await;
 
     let filters = transactions::TransactionFilterParams {
         transaction_type: Some(TransactionType::Income),
@@ -1001,14 +1030,14 @@ async fn filter_by_payment_method() {
     let acc = make_checking(&pool, "Nubank").await;
     let cat = make_expense_category(&pool, "Food").await;
 
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(10), "pix txn", cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
-    ).await.unwrap();
-    transactions::create_transaction(
+    ).await;
+    make_txn(
         &pool, dec!(20), "credit txn", cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Credit, date(2026, 3, 2),
-    ).await.unwrap();
+    ).await;
 
     let filters = transactions::TransactionFilterParams {
         payment_method: Some(PaymentMethod::Credit),
@@ -1028,20 +1057,20 @@ async fn filter_combined_narrows_results() {
     let cat = make_expense_category(&pool, "Food").await;
 
     // Nubank, March 1
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(10), "Nubank Mar", cat.id, acc_a.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
-    ).await.unwrap();
+    ).await;
     // Nubank, March 15
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(20), "Nubank Mar mid", cat.id, acc_a.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 15),
-    ).await.unwrap();
+    ).await;
     // Inter, March 1
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(30), "Inter Mar", cat.id, acc_b.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
-    ).await.unwrap();
+    ).await;
 
     // Filter: Nubank + date range [Mar 10, Mar 31]
     let filters = transactions::TransactionFilterParams {
@@ -1065,10 +1094,10 @@ async fn pagination_offset_skips_rows() {
     let cat = make_expense_category(&pool, "Food").await;
 
     for day in 1..=5 {
-        transactions::create_transaction(
+        make_txn(
             &pool, dec!(10), &format!("txn-{day}"), cat.id, acc.id,
             TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, day),
-        ).await.unwrap();
+        ).await;
     }
 
     let filters = transactions::TransactionFilterParams::default();
@@ -1098,18 +1127,18 @@ async fn count_filtered_with_filters() {
     let exp_cat = make_expense_category(&pool, "Food").await;
     let inc_cat = make_income_category(&pool, "Salary").await;
 
-    transactions::create_transaction(
+    make_txn(
         &pool, dec!(10), "a", exp_cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 1),
-    ).await.unwrap();
-    transactions::create_transaction(
+    ).await;
+    make_txn(
         &pool, dec!(20), "b", exp_cat.id, acc.id,
         TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 2),
-    ).await.unwrap();
-    transactions::create_transaction(
+    ).await;
+    make_txn(
         &pool, dec!(1000), "c", inc_cat.id, acc.id,
         TransactionType::Income, PaymentMethod::Transfer, date(2026, 3, 3),
-    ).await.unwrap();
+    ).await;
 
     let filters = transactions::TransactionFilterParams {
         transaction_type: Some(TransactionType::Expense),
@@ -1130,9 +1159,17 @@ async fn advance_next_due_updates_date() {
     let cat = make_expense_category(&pool, "Subscriptions").await;
 
     let r = recurring::create_recurring(
-        &pool, dec!(30), "Netflix", cat.id, acc.id,
-        TransactionType::Expense, PaymentMethod::Credit, Frequency::Monthly,
-        date(2026, 3, 1),
+        &pool,
+        &recurring::RecurringParams {
+            amount: dec!(30),
+            description: "Netflix".to_string(),
+            category_id: cat.id,
+            account_id: acc.id,
+            transaction_type: TransactionType::Expense,
+            payment_method: PaymentMethod::Credit,
+            frequency: Frequency::Monthly,
+            next_due: date(2026, 3, 1),
+        },
     ).await.unwrap();
 
     let new_due = recurring::compute_next_due(r.next_due, r.parsed_frequency());

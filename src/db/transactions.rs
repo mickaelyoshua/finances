@@ -6,6 +6,16 @@ use tracing::debug;
 
 use crate::models::{PaymentMethod, Transaction, TransactionType};
 
+pub struct TransactionParams {
+    pub amount: Decimal,
+    pub description: String,
+    pub category_id: i32,
+    pub account_id: i32,
+    pub transaction_type: TransactionType,
+    pub payment_method: PaymentMethod,
+    pub date: NaiveDate,
+}
+
 /// Filter criteria passed from the UI filter bar to the DB query layer.
 /// All fields are optional — `None` means "no constraint" for that dimension.
 #[derive(Default)]
@@ -88,29 +98,22 @@ fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, filters: &TransactionFilter
     }
 }
 
-
 pub async fn create_transaction(
     pool: &PgPool,
-    amount: Decimal,
-    description: &str,
-    category_id: i32,
-    account_id: i32,
-    transaction_type: TransactionType,
-    payment_method: PaymentMethod,
-    date: NaiveDate,
+    params: &TransactionParams,
 ) -> Result<Transaction, sqlx::Error> {
     sqlx::query_as::<_, Transaction>(
         "INSERT INTO transactions (amount, description, category_id, account_id, transaction_type, payment_method, date)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *",
     )
-    .bind(amount)
-    .bind(description)
-    .bind(category_id)
-    .bind(account_id)
-    .bind(transaction_type.as_str())
-    .bind(payment_method.as_str())
-    .bind(date)
+    .bind(params.amount)
+    .bind(&params.description)
+    .bind(params.category_id)
+    .bind(params.account_id)
+    .bind(params.transaction_type.as_str())
+    .bind(params.payment_method.as_str())
+    .bind(params.date)
     .fetch_one(pool)
     .await
 }
@@ -118,13 +121,7 @@ pub async fn create_transaction(
 pub async fn update_transaction(
     pool: &PgPool,
     id: i32,
-    amount: Decimal,
-    description: &str,
-    category_id: i32,
-    account_id: i32,
-    transaction_type: TransactionType,
-    payment_method: PaymentMethod,
-    date: NaiveDate,
+    params: &TransactionParams,
 ) -> Result<Transaction, sqlx::Error> {
     sqlx::query_as::<_, Transaction>(
         "UPDATE transactions
@@ -134,13 +131,13 @@ pub async fn update_transaction(
          RETURNING *",
     )
     .bind(id)
-    .bind(amount)
-    .bind(description)
-    .bind(category_id)
-    .bind(account_id)
-    .bind(transaction_type.as_str())
-    .bind(payment_method.as_str())
-    .bind(date)
+    .bind(params.amount)
+    .bind(&params.description)
+    .bind(params.category_id)
+    .bind(params.account_id)
+    .bind(params.transaction_type.as_str())
+    .bind(params.payment_method.as_str())
+    .bind(params.date)
     .fetch_one(pool)
     .await
 }

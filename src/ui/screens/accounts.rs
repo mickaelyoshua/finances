@@ -324,21 +324,18 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('x') => {
-                match crate::export::export_accounts(&self.accounts) {
-                    Ok(path) => {
-                        self.status_message = Some(StatusMessage::info(format!(
-                            "Exported {} accounts to {}",
-                            self.accounts.len(),
-                            path.display()
-                        )));
-                    }
-                    Err(e) => {
-                        self.status_message =
-                            Some(StatusMessage::error(format!("Export failed: {e}")));
-                    }
+            KeyCode::Char('x') => match crate::export::export_accounts(&self.accounts) {
+                Ok(path) => {
+                    self.status_message = Some(StatusMessage::info(format!(
+                        "Exported {} accounts to {}",
+                        self.accounts.len(),
+                        path.display()
+                    )));
                 }
-            }
+                Err(e) => {
+                    self.status_message = Some(StatusMessage::error(format!("Export failed: {e}")));
+                }
+            },
             _ => {}
         }
         Ok(())
@@ -441,32 +438,29 @@ impl App {
                 }
             }
 
-            accounts::update_account(
-                &self.pool,
-                id,
-                &validated.name,
-                validated.account_type,
-                validated.has_credit_card,
-                validated.credit_limit,
-                validated.billing_day,
-                validated.due_day,
-                validated.has_debit_card,
-            )
-            .await?;
-            info!(id, name = %validated.name, "account updated");
+            let params = accounts::AccountParams {
+                name: validated.name,
+                account_type: validated.account_type,
+                has_credit_card: validated.has_credit_card,
+                credit_limit: validated.credit_limit,
+                billing_day: validated.billing_day,
+                due_day: validated.due_day,
+                has_debit_card: validated.has_debit_card,
+            };
+            accounts::update_account(&self.pool, id, &params).await?;
+            info!(id, name = %params.name, "account updated");
         } else {
-            accounts::create_account(
-                &self.pool,
-                &validated.name,
-                validated.account_type,
-                validated.has_credit_card,
-                validated.credit_limit,
-                validated.billing_day,
-                validated.due_day,
-                validated.has_debit_card,
-            )
-            .await?;
-            info!(name = %validated.name, "account created");
+            let params = accounts::AccountParams {
+                name: validated.name,
+                account_type: validated.account_type,
+                has_credit_card: validated.has_credit_card,
+                credit_limit: validated.credit_limit,
+                billing_day: validated.billing_day,
+                due_day: validated.due_day,
+                has_debit_card: validated.has_debit_card,
+            };
+            accounts::create_account(&self.pool, &params).await?;
+            info!(name = %params.name, "account created");
         }
 
         self.account_form = None;

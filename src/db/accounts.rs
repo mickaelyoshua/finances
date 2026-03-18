@@ -5,6 +5,16 @@ use sqlx::PgPool;
 
 use crate::models::{Account, AccountType};
 
+pub struct AccountParams {
+    pub name: String,
+    pub account_type: AccountType,
+    pub has_credit_card: bool,
+    pub credit_limit: Option<Decimal>,
+    pub billing_day: Option<i16>,
+    pub due_day: Option<i16>,
+    pub has_debit_card: bool,
+}
+
 pub async fn list_accounts(pool: &PgPool) -> Result<Vec<Account>, sqlx::Error> {
     sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE active = TRUE ORDER BY id")
         .fetch_all(pool)
@@ -18,28 +28,19 @@ pub async fn get_account(pool: &PgPool, id: i32) -> Result<Account, sqlx::Error>
         .await
 }
 
-pub async fn create_account(
-    pool: &PgPool,
-    name: &str,
-    account_type: AccountType,
-    has_credit_card: bool,
-    credit_limit: Option<Decimal>,
-    billing_day: Option<i16>,
-    due_day: Option<i16>,
-    has_debit_card: bool,
-) -> Result<Account, sqlx::Error> {
+pub async fn create_account(pool: &PgPool, params: &AccountParams) -> Result<Account, sqlx::Error> {
     sqlx::query_as::<_, Account>(
         "INSERT INTO accounts (name, account_type, has_credit_card, credit_limit, billing_day, due_day, has_debit_card)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *",
     )
-    .bind(name)
-    .bind(account_type.as_str())
-    .bind(has_credit_card)
-    .bind(credit_limit)
-    .bind(billing_day)
-    .bind(due_day)
-    .bind(has_debit_card)
+    .bind(&params.name)
+    .bind(params.account_type.as_str())
+    .bind(params.has_credit_card)
+    .bind(params.credit_limit)
+    .bind(params.billing_day)
+    .bind(params.due_day)
+    .bind(params.has_debit_card)
     .fetch_one(pool)
     .await
 }
@@ -47,13 +48,7 @@ pub async fn create_account(
 pub async fn update_account(
     pool: &PgPool,
     id: i32,
-    name: &str,
-    account_type: AccountType,
-    has_credit_card: bool,
-    credit_limit: Option<Decimal>,
-    billing_day: Option<i16>,
-    due_day: Option<i16>,
-    has_debit_card: bool,
+    params: &AccountParams,
 ) -> Result<Account, sqlx::Error> {
     sqlx::query_as::<_, Account>(
         "UPDATE accounts
@@ -63,13 +58,13 @@ pub async fn update_account(
          RETURNING *",
     )
     .bind(id)
-    .bind(name)
-    .bind(account_type.as_str())
-    .bind(has_credit_card)
-    .bind(credit_limit)
-    .bind(billing_day)
-    .bind(due_day)
-    .bind(has_debit_card)
+    .bind(&params.name)
+    .bind(params.account_type.as_str())
+    .bind(params.has_credit_card)
+    .bind(params.credit_limit)
+    .bind(params.billing_day)
+    .bind(params.due_day)
+    .bind(params.has_debit_card)
     .fetch_one(pool)
     .await
 }
@@ -162,21 +157,22 @@ pub async fn has_references(pool: &PgPool, id: i32) -> Result<bool, sqlx::Error>
 }
 
 /// Return the set of distinct payment methods used in transactions for an account.
-pub async fn used_payment_methods(pool: &PgPool, account_id: i32) -> Result<Vec<String>, sqlx::Error> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT payment_method FROM transactions WHERE account_id = $1",
-    )
-    .bind(account_id)
-    .fetch_all(pool)
-    .await?;
+pub async fn used_payment_methods(
+    pool: &PgPool,
+    account_id: i32,
+) -> Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT DISTINCT payment_method FROM transactions WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_all(pool)
+            .await?;
     Ok(rows.into_iter().map(|(m,)| m).collect())
 }
 
 /// Load (id, name) pairs for ALL accounts (including inactive) for display lookups.
 pub async fn list_all_account_names(pool: &PgPool) -> Result<HashMap<i32, String>, sqlx::Error> {
-    let rows: Vec<(i32, String)> =
-        sqlx::query_as("SELECT id, name FROM accounts ORDER BY id")
-            .fetch_all(pool)
-            .await?;
+    let rows: Vec<(i32, String)> = sqlx::query_as("SELECT id, name FROM accounts ORDER BY id")
+        .fetch_all(pool)
+        .await?;
     Ok(rows.into_iter().collect())
 }
