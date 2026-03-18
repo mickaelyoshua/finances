@@ -36,12 +36,7 @@ pub enum CcPaymentField {
 }
 
 impl CcPaymentField {
-    pub const ALL: [Self; 4] = [
-        Self::Date,
-        Self::Account,
-        Self::Amount,
-        Self::Description,
-    ];
+    pub const ALL: [Self; 4] = [Self::Date, Self::Account, Self::Amount, Self::Description];
 }
 
 pub struct CcPaymentForm {
@@ -78,8 +73,7 @@ impl CcPaymentForm {
         let date = NaiveDate::parse_from_str(self.date.value.trim(), "%d-%m-%Y")
             .map_err(|_| "Invalid date (use DD-MM-YYYY)".to_string())?;
 
-        let cc_accounts: Vec<&Account> =
-            accounts.iter().filter(|a| a.has_credit_card).collect();
+        let cc_accounts: Vec<&Account> = accounts.iter().filter(|a| a.has_credit_card).collect();
 
         let account = cc_accounts
             .get(self.account_idx)
@@ -205,7 +199,13 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .filter(|a| a.has_credit_card)
                     .map(|a| a.name.as_str())
                     .collect();
-                render_selector("Account", &names, form.account_idx, active, "no credit card accounts")
+                render_selector(
+                    "Account",
+                    &names,
+                    form.account_idx,
+                    active,
+                    "no credit card accounts",
+                )
             }
             CcPaymentField::Amount => form.amount.render_line(active),
             CcPaymentField::Description => form.description.render_line(active),
@@ -227,18 +227,10 @@ impl App {
     pub(crate) async fn handle_cc_payments_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
-                move_table_selection(
-                    &mut self.cc_payment_table_state,
-                    self.cc_payments.len(),
-                    -1,
-                );
+                move_table_selection(&mut self.cc_payment_table_state, self.cc_payments.len(), -1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                move_table_selection(
-                    &mut self.cc_payment_table_state,
-                    self.cc_payments.len(),
-                    1,
-                );
+                move_table_selection(&mut self.cc_payment_table_state, self.cc_payments.len(), 1);
             }
             KeyCode::Char('n') => {
                 let has_cc = self.accounts.iter().any(|a| a.has_credit_card);
@@ -266,10 +258,9 @@ impl App {
             }
             KeyCode::Char('x') => {
                 let acct_names = &self.account_names;
-                match crate::export::export_cc_payments(
-                    &self.cc_payments,
-                    |id| acct_names.get(&id).cloned().unwrap_or_else(|| "?".into()),
-                ) {
+                match crate::export::export_cc_payments(&self.cc_payments, |id| {
+                    acct_names.get(&id).cloned().unwrap_or_else(|| "?".into())
+                }) {
                     Ok(path) => {
                         self.status_message = Some(StatusMessage::info(format!(
                             "Exported {} payments to {}",

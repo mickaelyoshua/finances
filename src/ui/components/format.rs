@@ -30,7 +30,7 @@ pub fn format_brl(value: Decimal) -> String {
     let chars: Vec<char> = int_part.chars().collect();
     let mut with_sep = String::with_capacity(int_part.len() + int_part.len() / 3);
     for (i, c) in chars.iter().enumerate() {
-        if i > 0 && (chars.len() - i) % 3 == 0 {
+        if i > 0 && (chars.len() - i).is_multiple_of(3) {
             with_sep.push('.');
         }
         with_sep.push(*c);

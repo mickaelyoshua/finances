@@ -13,8 +13,7 @@ use crate::ui::{App, components::format::format_brl};
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if app.notifications.is_empty() {
         // Original 3-section layout
-        let [top, bottom] =
-            Layout::vertical([Constraint::Min(5), Constraint::Min(5)]).areas(area);
+        let [top, bottom] = Layout::vertical([Constraint::Min(5), Constraint::Min(5)]).areas(area);
         let [budget_area, recurring_area] =
             Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
                 .areas(bottom);
@@ -49,9 +48,7 @@ fn render_notifications(frame: &mut Frame, area: Rect, app: &App) {
         .enumerate()
         .map(|(i, n)| {
             let style = if i == app.notification_selection {
-                Style::new()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
+                Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {
                 Style::new().fg(Color::White)
             };

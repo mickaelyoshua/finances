@@ -131,7 +131,8 @@ impl InstallmentForm {
             description: InputField::new("Description"),
             total_amount: InputField::new("Total Amount"),
             installment_count: InputField::new("Installments"),
-            first_date: InputField::new("First Date").with_value(today.format("%d-%m-%Y").to_string()),
+            first_date: InputField::new("First Date")
+                .with_value(today.format("%d-%m-%Y").to_string()),
             account_idx: 0,
             category_idx: 0,
             active_field: 0,
@@ -156,8 +157,15 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let [table_area, detail_area] =
         Layout::vertical([Constraint::Min(5), Constraint::Length(7)]).areas(area);
 
-    let header = Row::new(["Description", "Total", "# Inst.", "First Date", "Account", "Category"])
-        .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let header = Row::new([
+        "Description",
+        "Total",
+        "# Inst.",
+        "First Date",
+        "Account",
+        "Category",
+    ])
+    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .installments
@@ -189,7 +197,11 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         ],
     )
     .header(header)
-    .block(Block::default().borders(Borders::ALL).title("Installment Purchases"))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Installment Purchases"),
+    )
     .row_highlight_style(
         Style::new()
             .bg(Color::DarkGray)
@@ -262,7 +274,13 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .filter(|a| a.has_credit_card)
                     .map(|a| a.name.as_str())
                     .collect();
-                render_selector("Account", &names, form.account_idx, active, "no accounts with credit card")
+                render_selector(
+                    "Account",
+                    &names,
+                    form.account_idx,
+                    active,
+                    "no accounts with credit card",
+                )
             }
             InstallmentField::Category => {
                 let names: Vec<&str> = app
@@ -271,7 +289,13 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .filter(|c| c.parsed_type() == CategoryType::Expense)
                     .map(|c| c.name.as_str())
                     .collect();
-                render_selector("Category", &names, form.category_idx, active, "no expense categories")
+                render_selector(
+                    "Category",
+                    &names,
+                    form.category_idx,
+                    active,
+                    "no expense categories",
+                )
             }
         };
         lines.push(line);

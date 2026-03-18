@@ -244,21 +244,18 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('x') => {
-                match crate::export::export_categories(&self.categories) {
-                    Ok(path) => {
-                        self.status_message = Some(StatusMessage::info(format!(
-                            "Exported {} categories to {}",
-                            self.categories.len(),
-                            path.display()
-                        )));
-                    }
-                    Err(e) => {
-                        self.status_message =
-                            Some(StatusMessage::error(format!("Export failed: {e}")));
-                    }
+            KeyCode::Char('x') => match crate::export::export_categories(&self.categories) {
+                Ok(path) => {
+                    self.status_message = Some(StatusMessage::info(format!(
+                        "Exported {} categories to {}",
+                        self.categories.len(),
+                        path.display()
+                    )));
                 }
-            }
+                Err(e) => {
+                    self.status_message = Some(StatusMessage::error(format!("Export failed: {e}")));
+                }
+            },
             _ => {}
         }
         Ok(())
@@ -311,16 +308,14 @@ impl App {
 
         if let Some(id) = edit_id {
             // Guard: block type change if category is referenced
-            if let Some(old) = self.categories.iter().find(|c| c.id == id) {
-                if old.parsed_type() != validated.category_type
-                    && categories::has_references(&self.pool, id).await?
-                {
-                    self.category_form.as_mut().unwrap().error = Some(
-                        "Cannot change type: category is referenced by transactions or budgets"
-                            .into(),
-                    );
-                    return Ok(());
-                }
+            if let Some(old) = self.categories.iter().find(|c| c.id == id)
+                && old.parsed_type() != validated.category_type
+                && categories::has_references(&self.pool, id).await?
+            {
+                self.category_form.as_mut().unwrap().error = Some(
+                    "Cannot change type: category is referenced by transactions or budgets".into(),
+                );
+                return Ok(());
             }
 
             categories::update_category(&self.pool, id, &validated.name, validated.category_type)

@@ -28,11 +28,7 @@ pub async fn create_budget(
     .await
 }
 
-pub async fn update_budget(
-    pool: &PgPool,
-    id: i32,
-    amount: Decimal,
-) -> Result<Budget, sqlx::Error> {
+pub async fn update_budget(pool: &PgPool, id: i32, amount: Decimal) -> Result<Budget, sqlx::Error> {
     sqlx::query_as::<_, Budget>("UPDATE budgets SET amount = $2 WHERE id = $1 RETURNING *")
         .bind(id)
         .bind(amount)

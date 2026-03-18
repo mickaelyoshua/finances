@@ -46,7 +46,15 @@ pub fn export_transactions(
 ) -> Result<PathBuf> {
     let path = export_path("transactions")?;
     let mut wtr = csv::Writer::from_path(&path)?;
-    wtr.write_record(["Date", "Description", "Amount", "Type", "Payment Method", "Account", "Category"])?;
+    wtr.write_record([
+        "Date",
+        "Description",
+        "Amount",
+        "Type",
+        "Payment Method",
+        "Account",
+        "Category",
+    ])?;
     for t in txns {
         wtr.write_record([
             t.date.to_string(),
@@ -69,7 +77,13 @@ pub fn export_transfers(
 ) -> Result<PathBuf> {
     let path = export_path("transfers")?;
     let mut wtr = csv::Writer::from_path(&path)?;
-    wtr.write_record(["Date", "From Account", "To Account", "Amount", "Description"])?;
+    wtr.write_record([
+        "Date",
+        "From Account",
+        "To Account",
+        "Amount",
+        "Description",
+    ])?;
     for t in transfers {
         wtr.write_record([
             t.date.to_string(),
@@ -111,7 +125,14 @@ pub fn export_installments(
 ) -> Result<PathBuf> {
     let path = export_path("installments")?;
     let mut wtr = csv::Writer::from_path(&path)?;
-    wtr.write_record(["Description", "Total Amount", "Installments", "First Date", "Account", "Category"])?;
+    wtr.write_record([
+        "Description",
+        "Total Amount",
+        "Installments",
+        "First Date",
+        "Account",
+        "Category",
+    ])?;
     for i in installments {
         wtr.write_record([
             i.description.clone(),
@@ -135,8 +156,15 @@ pub fn export_recurring(
     let path = export_path("recurring")?;
     let mut wtr = csv::Writer::from_path(&path)?;
     wtr.write_record([
-        "Description", "Amount", "Type", "Frequency", "Next Due",
-        "Account", "Payment Method", "Category", "Active",
+        "Description",
+        "Amount",
+        "Type",
+        "Frequency",
+        "Next Due",
+        "Account",
+        "Payment Method",
+        "Category",
+        "Active",
     ])?;
     for r in recurring {
         wtr.write_record([
@@ -160,8 +188,14 @@ pub fn export_accounts(accounts: &[Account]) -> Result<PathBuf> {
     let path = export_path("accounts")?;
     let mut wtr = csv::Writer::from_path(&path)?;
     wtr.write_record([
-        "Name", "Type", "Has Credit Card", "Credit Limit",
-        "Billing Day", "Due Day", "Has Debit Card", "Active",
+        "Name",
+        "Type",
+        "Has Credit Card",
+        "Credit Limit",
+        "Billing Day",
+        "Due Day",
+        "Has Debit Card",
+        "Active",
     ])?;
     for a in accounts {
         wtr.write_record([
@@ -185,10 +219,7 @@ pub fn export_categories(categories: &[Category]) -> Result<PathBuf> {
     let mut wtr = csv::Writer::from_path(&path)?;
     wtr.write_record(["Name", "Type"])?;
     for c in categories {
-        wtr.write_record([
-            c.name.clone(),
-            c.parsed_type().label().to_string(),
-        ])?;
+        wtr.write_record([c.name.clone(), c.parsed_type().label().to_string()])?;
     }
     wtr.flush()?;
     info!(rows = categories.len(), path = %path.display(), "exported categories");

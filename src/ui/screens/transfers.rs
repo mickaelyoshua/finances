@@ -71,7 +71,7 @@ impl TransferForm {
         Self {
             date: InputField::new("Date").with_value(today.format("%d-%m-%Y").to_string()),
             from_account_idx: 0,
-            to_account_idx: 1.min(0), // will be clamped by cycle_index
+            to_account_idx: 1, // default to second account; clamped by cycle_index
             amount: InputField::new("Amount"),
             description: InputField::new("Description"),
             active_field: 0,
@@ -177,11 +177,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     app.account_name(t.from_account_id),
                     app.account_name(t.to_account_id),
                 )),
-                Line::from(format!(
-                    " {} | {}",
-                    format_brl(t.amount),
-                    t.description,
-                )),
+                Line::from(format!(" {} | {}", format_brl(t.amount), t.description,)),
                 Line::from(format!(
                     " Created: {}",
                     t.created_at.format("%d-%m-%Y %H:%M")
@@ -227,9 +223,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 
     push_form_error(&mut lines, &form.error);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("New Transfer");
+    let block = Block::default().borders(Borders::ALL).title("New Transfer");
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -271,10 +265,9 @@ impl App {
             }
             KeyCode::Char('x') => {
                 let acct_names = &self.account_names;
-                match crate::export::export_transfers(
-                    &self.transfers,
-                    |id| acct_names.get(&id).cloned().unwrap_or_else(|| "?".into()),
-                ) {
+                match crate::export::export_transfers(&self.transfers, |id| {
+                    acct_names.get(&id).cloned().unwrap_or_else(|| "?".into())
+                }) {
                     Ok(path) => {
                         self.status_message = Some(StatusMessage::info(format!(
                             "Exported {} transfers to {}",

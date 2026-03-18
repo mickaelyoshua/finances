@@ -32,9 +32,7 @@ impl EventHandler {
                             Ok(Event::Key(key)) if key.kind == KeyEventKind::Press => {
                                 tx.send(AppEvent::Key(key)).is_ok()
                             }
-                            Ok(Event::Resize(w, h)) => {
-                                tx.send(AppEvent::Resize(w, h)).is_ok()
-                            }
+                            Ok(Event::Resize(w, h)) => tx.send(AppEvent::Resize(w, h)).is_ok(),
                             Ok(_) => true, // ignore mouse, focus, paste events
                             Err(_) => false,
                         },

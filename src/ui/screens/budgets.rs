@@ -150,7 +150,11 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .map(|b| {
             let category_name = app.category_name(b.category_id);
 
-            let spent = app.budget_spent.get(&b.id).copied().unwrap_or(Decimal::ZERO);
+            let spent = app
+                .budget_spent
+                .get(&b.id)
+                .copied()
+                .unwrap_or(Decimal::ZERO);
             let pct = if b.amount > Decimal::ZERO {
                 (spent * Decimal::from(100)) / b.amount
             } else {
@@ -204,7 +208,11 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         Some(b) => {
             let category_name = app.category_name(b.category_id);
 
-            let spent = app.budget_spent.get(&b.id).copied().unwrap_or(Decimal::ZERO);
+            let spent = app
+                .budget_spent
+                .get(&b.id)
+                .copied()
+                .unwrap_or(Decimal::ZERO);
 
             vec![
                 Line::from(format!(
@@ -258,7 +266,13 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                         names.get(form.category_idx).unwrap_or(&"?")
                     ))
                 } else {
-                    render_selector("Category", &names, form.category_idx, active, "no expense categories")
+                    render_selector(
+                        "Category",
+                        &names,
+                        form.category_idx,
+                        active,
+                        "no expense categories",
+                    )
                 }
             }
             BudgetField::Amount => form.amount.render_line(active),

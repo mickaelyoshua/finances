@@ -18,12 +18,8 @@ use crate::{
 };
 
 use super::screens::{
-    accounts::AccountForm,
-    budgets::BudgetForm,
-    categories::CategoryForm,
-    cc_payments::CcPaymentForm,
-    installments::InstallmentForm,
-    recurring::RecurringForm,
+    accounts::AccountForm, budgets::BudgetForm, categories::CategoryForm,
+    cc_payments::CcPaymentForm, installments::InstallmentForm, recurring::RecurringForm,
     transfers::TransferForm,
 };
 
@@ -428,14 +424,20 @@ impl App {
     fn active_table_state(&mut self) -> Option<(&mut TableState, usize)> {
         match self.screen {
             Screen::Dashboard => None,
-            Screen::Transactions => Some((&mut self.transaction_table_state, self.transactions.len())),
+            Screen::Transactions => {
+                Some((&mut self.transaction_table_state, self.transactions.len()))
+            }
             Screen::Accounts => Some((&mut self.account_table_state, self.accounts.len())),
             Screen::Budgets => Some((&mut self.budget_table_state, self.budgets.len())),
             Screen::Categories => Some((&mut self.category_table_state, self.categories.len())),
-            Screen::Installments => Some((&mut self.installment_table_state, self.installments.len())),
+            Screen::Installments => {
+                Some((&mut self.installment_table_state, self.installments.len()))
+            }
             Screen::Recurring => Some((&mut self.recurring_table_state, self.recurring_list.len())),
             Screen::Transfers => Some((&mut self.transfer_table_state, self.transfers.len())),
-            Screen::CreditCardPayments => Some((&mut self.cc_payment_table_state, self.cc_payments.len())),
+            Screen::CreditCardPayments => {
+                Some((&mut self.cc_payment_table_state, self.cc_payments.len()))
+            }
         }
     }
 
@@ -444,10 +446,10 @@ impl App {
             if !self.notifications.is_empty() {
                 self.notification_selection = row.min(self.notifications.len() - 1);
             }
-        } else if let Some((state, len)) = self.active_table_state() {
-            if len > 0 {
-                state.select(Some(row.min(len - 1)));
-            }
+        } else if let Some((state, len)) = self.active_table_state()
+            && len > 0
+        {
+            state.select(Some(row.min(len - 1)));
         }
     }
 
@@ -456,10 +458,10 @@ impl App {
             if !self.notifications.is_empty() {
                 self.notification_selection = self.notifications.len() - 1;
             }
-        } else if let Some((state, len)) = self.active_table_state() {
-            if len > 0 {
-                state.select(Some(len - 1));
-            }
+        } else if let Some((state, len)) = self.active_table_state()
+            && len > 0
+        {
+            state.select(Some(len - 1));
         }
     }
 
@@ -544,8 +546,9 @@ impl App {
                     self.load_data().await?;
                     // Clamp selection after removal
                     if !self.notifications.is_empty() {
-                        self.notification_selection =
-                            self.notification_selection.min(self.notifications.len() - 1);
+                        self.notification_selection = self
+                            .notification_selection
+                            .min(self.notifications.len() - 1);
                     } else {
                         self.notification_selection = 0;
                     }

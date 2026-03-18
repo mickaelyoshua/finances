@@ -19,8 +19,9 @@ pub struct Config {
 pub fn database_url(prod: bool) -> String {
     let env_file = if prod { ".env.prod" } else { ".env" };
 
-    dotenvy::from_filename(env_file)
-        .unwrap_or_else(|_| panic!("{env_file} not found — copy {env_file}.example and fill in your credentials"));
+    dotenvy::from_filename(env_file).unwrap_or_else(|_| {
+        panic!("{env_file} not found — copy {env_file}.example and fill in your credentials")
+    });
 
     std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| panic!("DATABASE_URL must be set in {env_file}"))

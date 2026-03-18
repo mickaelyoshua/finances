@@ -112,21 +112,12 @@ fn render_tabs(frame: &mut Frame, area: Rect, current: Screen) {
 
     // Draw overflow arrows
     if has_left {
-        let arrow = Paragraph::new(Span::styled(
-            "◀ ",
-            Style::new().fg(Color::DarkGray),
-        ));
+        let arrow = Paragraph::new(Span::styled("◀ ", Style::new().fg(Color::DarkGray)));
         frame.render_widget(arrow, Rect::new(area.x, area.y, 2, 1));
     }
     if has_right {
-        let arrow = Paragraph::new(Span::styled(
-            " ▶",
-            Style::new().fg(Color::DarkGray),
-        ));
-        frame.render_widget(
-            arrow,
-            Rect::new(area.x + area.width - 2, area.y, 2, 1),
-        );
+        let arrow = Paragraph::new(Span::styled(" ▶", Style::new().fg(Color::DarkGray)));
+        frame.render_widget(arrow, Rect::new(area.x + area.width - 2, area.y, 2, 1));
     }
 }
 
@@ -164,7 +155,11 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     if let Some(msg) = &app.status_message {
-        let color = if msg.is_error { Color::Red } else { Color::Green };
+        let color = if msg.is_error {
+            Color::Red
+        } else {
+            Color::Green
+        };
         let line = Line::from(vec![
             env_badge,
             Span::styled(
@@ -202,9 +197,7 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
             if !app.notifications.is_empty() {
                 spans.push(Span::styled(
                     format!(" [{} unread]", app.notifications.len()),
-                    Style::new()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
+                    Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
                 ));
             }
         }

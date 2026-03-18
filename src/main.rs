@@ -6,11 +6,11 @@ use std::time::Duration;
 
 use chrono::Local;
 use clap::Parser;
-use rust_decimal::prelude::ToPrimitive;
 use config::Config;
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::{Terminal, backend::CrosstermBackend};
+use rust_decimal::prelude::ToPrimitive;
 use tracing::{error, info};
 
 #[tokio::main]
@@ -112,8 +112,7 @@ async fn main() -> anyhow::Result<()> {
             // Find the highest crossed threshold only
             if pct_u32 > 100 {
                 let ntype = finances::models::NotificationType::BudgetExceeded;
-                db::notifications::clear_stale_budget_notifications(&pool, b.id, ntype)
-                    .await?;
+                db::notifications::clear_stale_budget_notifications(&pool, b.id, ntype).await?;
                 let msg = format!(
                     "Budget '{}' ({}) EXCEEDED — {}/{}",
                     cat_name,
@@ -126,8 +125,7 @@ async fn main() -> anyhow::Result<()> {
             } else if let Some(&(threshold, ntype)) =
                 thresholds.iter().rev().find(|(t, _)| pct_u32 >= *t)
             {
-                db::notifications::clear_stale_budget_notifications(&pool, b.id, ntype)
-                    .await?;
+                db::notifications::clear_stale_budget_notifications(&pool, b.id, ntype).await?;
                 let msg = format!(
                     "Budget '{}' ({}) reached {}% — {}/{}",
                     cat_name,
