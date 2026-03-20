@@ -93,8 +93,12 @@ fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, filters: &TransactionFilter
             .push_bind(m.as_str().to_string());
     }
     if let Some(ref desc) = filters.description {
+        let escaped = desc
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
         qb.push(" AND description ILIKE ")
-            .push_bind(format!("%{desc}%"));
+            .push_bind(format!("%{escaped}%"));
     }
 }
 
