@@ -5,15 +5,28 @@ Personal finance TUI in Rust. Production database on Neon (PostgreSQL), local de
 ## Build & Run
 
 ```sh
-docker compose up -d          # start local PostgreSQL
-cargo build                   # compile
-cargo run                     # TUI (local dev DB)
-cargo run -- --prod           # TUI (production Neon DB)
-cargo run -- --migrate        # run migrations (dev)
-cargo run -- --migrate --prod # run migrations (prod)
+make help                     # show all targets
+make dev                      # start local PostgreSQL
+make migrate                  # run migrations (dev)
+make migrate-prod             # run migrations (prod)
+make run                      # TUI (local dev DB)
+make run-prod                 # TUI (production Neon DB)
+make test                     # run all tests (needs local DB running)
+make test-one T=test_name     # run a single test
+make release                  # optimized release build
+make clippy                   # lint check
+make deploy                   # full pipeline: test → migrate → release
 cargo run -- --notify --prod  # send desktop notifications (for cron)
-cargo test                    # run tests (needs local DB running)
 ```
+
+## Deployment
+
+The release binary (`target/release/finances`) is launched on laptop startup
+via Hyprland: `exec-once = sh -c 'cd ~/personal/finances && ./target/release/finances --notify --prod'`
+
+`make deploy` runs tests first — if any test fails, the pipeline aborts before
+migrating or building. After a successful deploy the release binary is updated
+in-place and will be used on the next startup.
 
 ## Environment
 
@@ -46,4 +59,4 @@ cargo test                    # run tests (needs local DB running)
 - 9 tables: accounts, categories, transactions, transfers, credit_card_payments, installment_purchases, budgets, recurring_transactions, notifications
 - Local: `finances/finances@localhost:5432/finances` (docker-compose)
 - Production: Neon free tier with TLS (`tls-rustls` feature in sqlx)
-- Single migration file: `migrations/20260305_initial.sql`
+- Migration files: `migrations/20260305_initial.sql`, `migrations/20260320_add_indexes.sql`
