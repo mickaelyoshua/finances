@@ -139,3 +139,25 @@ fn with_value_multibyte_cursor_counts_chars() {
     let field = InputField::new("Test").with_value("café");
     assert_eq!(field.cursor, 4); // 4 chars, not 5 bytes
 }
+
+// -- max_len enforcement --
+
+#[test]
+fn max_len_blocks_insertion_at_limit() {
+    let mut field = InputField::new("Test").with_max_len(3);
+    field.handle_key(KeyCode::Char('a'));
+    field.handle_key(KeyCode::Char('b'));
+    field.handle_key(KeyCode::Char('c'));
+    field.handle_key(KeyCode::Char('d')); // should be blocked
+    assert_eq!(field.value, "abc");
+    assert_eq!(field.cursor, 3);
+}
+
+#[test]
+fn max_len_allows_insertion_below_limit() {
+    let mut field = InputField::new("Test").with_max_len(5);
+    field.handle_key(KeyCode::Char('a'));
+    field.handle_key(KeyCode::Char('b'));
+    assert_eq!(field.value, "ab");
+    assert_eq!(field.cursor, 2);
+}

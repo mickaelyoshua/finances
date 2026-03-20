@@ -9,6 +9,8 @@ pub struct InputField {
     pub value: String,
     /// Cursor position in characters (not bytes).
     pub cursor: usize,
+    /// Maximum allowed characters. Enforced on insertion.
+    pub max_len: Option<usize>,
 }
 
 impl InputField {
@@ -17,12 +19,18 @@ impl InputField {
             label: label.into(),
             value: String::new(),
             cursor: 0,
+            max_len: Some(255),
         }
     }
 
     pub fn with_value(mut self, value: impl Into<String>) -> Self {
         self.value = value.into();
         self.cursor = self.value.chars().count();
+        self
+    }
+
+    pub fn with_max_len(mut self, max_len: usize) -> Self {
+        self.max_len = Some(max_len);
         self
     }
 
@@ -38,9 +46,14 @@ impl InputField {
     pub fn handle_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Char(c) => {
-                let byte_pos = self.byte_offset(self.cursor);
-                self.value.insert(byte_pos, c);
-                self.cursor += 1;
+                if self
+                    .max_len
+                    .is_none_or(|max| self.value.chars().count() < max)
+                {
+                    let byte_pos = self.byte_offset(self.cursor);
+                    self.value.insert(byte_pos, c);
+                    self.cursor += 1;
+                }
             }
             KeyCode::Backspace => {
                 if self.cursor > 0 {
