@@ -66,7 +66,11 @@ fn payment_method_invalid_rejected() {
 
 #[test]
 fn budget_period_roundtrip() {
-    for variant in [BudgetPeriod::Weekly, BudgetPeriod::Monthly, BudgetPeriod::Yearly] {
+    for variant in [
+        BudgetPeriod::Weekly,
+        BudgetPeriod::Monthly,
+        BudgetPeriod::Yearly,
+    ] {
         let parsed: BudgetPeriod = variant.to_string().parse().unwrap();
         assert_eq!(parsed, variant);
     }
@@ -120,12 +124,18 @@ fn notification_type_invalid_rejected() {
 
 #[test]
 fn expense_maps_to_expense_category() {
-    assert_eq!(TransactionType::Expense.category_type(), CategoryType::Expense);
+    assert_eq!(
+        TransactionType::Expense.category_type(),
+        CategoryType::Expense
+    );
 }
 
 #[test]
 fn income_maps_to_income_category() {
-    assert_eq!(TransactionType::Income.category_type(), CategoryType::Income);
+    assert_eq!(
+        TransactionType::Income.category_type(),
+        CategoryType::Income
+    );
 }
 
 // -- Account::allowed_payment_methods --
@@ -136,7 +146,11 @@ fn make_account(account_type: &str, has_credit_card: bool, has_debit_card: bool)
         name: "Test".into(),
         account_type: account_type.into(),
         has_credit_card,
-        credit_limit: if has_credit_card { Some(dec!(1000)) } else { None },
+        credit_limit: if has_credit_card {
+            Some(dec!(1000))
+        } else {
+            None
+        },
         billing_day: if has_credit_card { Some(10) } else { None },
         due_day: if has_credit_card { Some(20) } else { None },
         has_debit_card,

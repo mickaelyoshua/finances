@@ -59,7 +59,13 @@ fn export_transactions_headers_and_data() {
 
     let path = export::export_transactions(
         &txns,
-        |id| if id == 20 { "Nubank".into() } else { "?".into() },
+        |id| {
+            if id == 20 {
+                "Nubank".into()
+            } else {
+                "?".into()
+            }
+        },
         |id| match id {
             10 => "Food".into(),
             11 => "Salary".into(),
@@ -69,9 +75,18 @@ fn export_transactions_headers_and_data() {
     .unwrap();
 
     let lines = read_csv_lines(&path);
-    assert_eq!(lines[0], "Date,Description,Amount,Type,Payment Method,Account,Category");
-    assert_eq!(lines[1], "2026-03-15,Groceries,150.75,Expense,PIX,Nubank,Food");
-    assert_eq!(lines[2], "2026-03-01,Salary,3000,Income,Transfer,Nubank,Salary");
+    assert_eq!(
+        lines[0],
+        "Date,Description,Amount,Type,Payment Method,Account,Category"
+    );
+    assert_eq!(
+        lines[1],
+        "2026-03-15,Groceries,150.75,Expense,PIX,Nubank,Food"
+    );
+    assert_eq!(
+        lines[2],
+        "2026-03-01,Salary,3000,Income,Transfer,Nubank,Salary"
+    );
     assert_eq!(lines.len(), 3);
 
     fs::remove_file(&path).unwrap();
@@ -79,16 +94,14 @@ fn export_transactions_headers_and_data() {
 
 #[test]
 fn export_transactions_empty_produces_header_only() {
-    let path = export::export_transactions(
-        &[],
-        |_| "?".into(),
-        |_| "?".into(),
-    )
-    .unwrap();
+    let path = export::export_transactions(&[], |_| "?".into(), |_| "?".into()).unwrap();
 
     let lines = read_csv_lines(&path);
     assert_eq!(lines.len(), 1);
-    assert_eq!(lines[0], "Date,Description,Amount,Type,Payment Method,Account,Category");
+    assert_eq!(
+        lines[0],
+        "Date,Description,Amount,Type,Payment Method,Account,Category"
+    );
 
     fs::remove_file(&path).unwrap();
 }
@@ -109,12 +122,7 @@ fn export_transactions_special_chars_escaped() {
         created_at: Utc::now(),
     }];
 
-    let path = export::export_transactions(
-        &txns,
-        |_| "Cash".into(),
-        |_| "Food".into(),
-    )
-    .unwrap();
+    let path = export::export_transactions(&txns, |_| "Cash".into(), |_| "Food".into()).unwrap();
 
     let content = fs::read_to_string(&path).unwrap();
     // The csv crate should quote the description field because it contains commas and quotes
@@ -137,14 +145,11 @@ fn export_transfers_headers_and_data() {
         created_at: Utc::now(),
     }];
 
-    let path = export::export_transfers(
-        &transfers,
-        |id| match id {
-            1 => "Nubank".into(),
-            2 => "PicPay".into(),
-            _ => "?".into(),
-        },
-    )
+    let path = export::export_transfers(&transfers, |id| match id {
+        1 => "Nubank".into(),
+        2 => "PicPay".into(),
+        _ => "?".into(),
+    })
     .unwrap();
 
     let lines = read_csv_lines(&path);
@@ -167,11 +172,7 @@ fn export_cc_payments_headers_and_data() {
         created_at: Utc::now(),
     }];
 
-    let path = export::export_cc_payments(
-        &payments,
-        |_| "Nubank".into(),
-    )
-    .unwrap();
+    let path = export::export_cc_payments(&payments, |_| "Nubank".into()).unwrap();
 
     let lines = read_csv_lines(&path);
     assert_eq!(lines[0], "Date,Account,Amount,Description");
@@ -195,15 +196,15 @@ fn export_installments_headers_and_data() {
         created_at: Utc::now(),
     }];
 
-    let path = export::export_installments(
-        &installments,
-        |_| "Nubank".into(),
-        |_| "Electronics".into(),
-    )
-    .unwrap();
+    let path =
+        export::export_installments(&installments, |_| "Nubank".into(), |_| "Electronics".into())
+            .unwrap();
 
     let lines = read_csv_lines(&path);
-    assert_eq!(lines[0], "Description,Total Amount,Installments,First Date,Account,Category");
+    assert_eq!(
+        lines[0],
+        "Description,Total Amount,Installments,First Date,Account,Category"
+    );
     assert_eq!(lines[1], "New laptop,2400,12,2026-01-15,Nubank,Electronics");
 
     fs::remove_file(&path).unwrap();
@@ -242,12 +243,9 @@ fn export_recurring_headers_and_active_flag() {
         },
     ];
 
-    let path = export::export_recurring(
-        &recurring,
-        |_| "Nubank".into(),
-        |_| "Subscriptions".into(),
-    )
-    .unwrap();
+    let path =
+        export::export_recurring(&recurring, |_| "Nubank".into(), |_| "Subscriptions".into())
+            .unwrap();
 
     let lines = read_csv_lines(&path);
     assert_eq!(
@@ -354,12 +352,7 @@ fn export_budgets_with_spent_and_percentage() {
     let mut spent = HashMap::new();
     spent.insert(1, dec!(350));
 
-    let path = export::export_budgets(
-        &budgets,
-        |_| "Food".into(),
-        &spent,
-    )
-    .unwrap();
+    let path = export::export_budgets(&budgets, |_| "Food".into(), &spent).unwrap();
 
     let lines = read_csv_lines(&path);
     assert_eq!(lines[0], "Category,Amount,Period,Spent,Percentage");
@@ -380,12 +373,7 @@ fn export_budgets_zero_amount_no_panic() {
 
     let spent = HashMap::new(); // no spent entry → defaults to 0
 
-    let path = export::export_budgets(
-        &budgets,
-        |_| "Food".into(),
-        &spent,
-    )
-    .unwrap();
+    let path = export::export_budgets(&budgets, |_| "Food".into(), &spent).unwrap();
 
     let lines = read_csv_lines(&path);
     // Zero amount → 0% (no division by zero)
