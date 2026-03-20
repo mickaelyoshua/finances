@@ -40,6 +40,20 @@ pub async fn create_transfer(
     .await
 }
 
+pub async fn count_transfers(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM transfers")
+        .fetch_one(pool)
+        .await?;
+    Ok(row.0 as u64)
+}
+
+/// Fetch all transfers (no pagination) for CSV export.
+pub async fn list_all_transfers(pool: &PgPool) -> Result<Vec<Transfer>, sqlx::Error> {
+    sqlx::query_as::<_, Transfer>("SELECT * FROM transfers ORDER BY date DESC, id DESC")
+        .fetch_all(pool)
+        .await
+}
+
 pub async fn delete_transfer(pool: &PgPool, id: i32) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM transfers WHERE id = $1")
         .bind(id)

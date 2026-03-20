@@ -15,7 +15,7 @@ use crate::{
     ui::{
         App,
         app::{
-            ConfirmAction, InputMode, StatusMessage, clamp_selection, cycle_index,
+            ConfirmAction, InputMode, PAGE_SIZE, StatusMessage, clamp_selection, cycle_index,
             move_table_selection,
         },
         components::{
@@ -140,7 +140,16 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Credit Card Payments"),
+            .title(if app.cc_payment_count > 0 {
+                let start = app.cc_payment_offset + 1;
+                let end = app.cc_payment_offset + app.cc_payments.len() as u64;
+                format!(
+                    "Credit Card Payments ({start}-{end} of {})",
+                    app.cc_payment_count
+                )
+            } else {
+                "Credit Card Payments (0)".to_string()
+            }),
     )
     .row_highlight_style(
         Style::new()
@@ -257,21 +266,44 @@ impl App {
                 }
             }
             KeyCode::Char('x') => {
-                let acct_names = &self.account_names;
-                match crate::export::export_cc_payments(&self.cc_payments, |id| {
-                    acct_names.get(&id).cloned().unwrap_or_else(|| "?".into())
-                }) {
-                    Ok(path) => {
-                        self.status_message = Some(StatusMessage::info(format!(
-                            "Exported {} payments to {}",
-                            self.cc_payments.len(),
-                            path.display()
-                        )));
+                match crate::db::credit_card_payments::list_all_cc_payments(&self.pool).await {
+                    Ok(all_payments) => {
+                        let acct_names = &self.account_names;
+                        match crate::export::export_cc_payments(&all_payments, |id| {
+                            acct_names.get(&id).cloned().unwrap_or_else(|| "?".into())
+                        }) {
+                            Ok(path) => {
+                                self.status_message = Some(StatusMessage::info(format!(
+                                    "Exported {} payments to {}",
+                                    all_payments.len(),
+                                    path.display()
+                                )));
+                            }
+                            Err(e) => {
+                                self.status_message =
+                                    Some(StatusMessage::error(format!("Export failed: {e}")));
+                            }
+                        }
                     }
                     Err(e) => {
                         self.status_message =
                             Some(StatusMessage::error(format!("Export failed: {e}")));
                     }
+                }
+            }
+            KeyCode::PageUp => {
+                if self.cc_payment_offset > 0 {
+                    self.cc_payment_offset = self.cc_payment_offset.saturating_sub(PAGE_SIZE);
+                    self.load_cc_payments().await?;
+                    self.cc_payment_table_state.select(Some(0));
+                }
+            }
+            KeyCode::PageDown => {
+                let next = self.cc_payment_offset + PAGE_SIZE;
+                if next < self.cc_payment_count {
+                    self.cc_payment_offset = next;
+                    self.load_cc_payments().await?;
+                    self.cc_payment_table_state.select(Some(0));
                 }
             }
             _ => {}

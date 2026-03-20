@@ -224,7 +224,8 @@ async fn run_loop(
         terminal.draw(|frame| ui::render::draw(frame, app))?;
         match events.next().await {
             Some(ui::AppEvent::Key(key)) => app.handle_key(key).await?,
-            Some(ui::AppEvent::Resize(_, _)) | Some(ui::AppEvent::Tick) => {}
+            Some(ui::AppEvent::Tick) => app.tick(),
+            Some(ui::AppEvent::Resize(_, _)) => {}
             None => break,
         }
     }

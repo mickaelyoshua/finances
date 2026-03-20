@@ -99,6 +99,7 @@ pub enum ConfirmAction {
 pub struct StatusMessage {
     pub text: String,
     pub is_error: bool,
+    pub ticks_remaining: u8,
 }
 
 impl StatusMessage {
@@ -106,12 +107,14 @@ impl StatusMessage {
         Self {
             text: text.into(),
             is_error: true,
+            ticks_remaining: 20, // 5 seconds at 250ms tick
         }
     }
     pub fn info(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
             is_error: false,
+            ticks_remaining: 12, // 3 seconds at 250ms tick
         }
     }
 }
@@ -167,10 +170,16 @@ pub struct App {
     pub transfers: Vec<Transfer>,
     pub transfer_table_state: TableState,
     pub transfer_form: Option<TransferForm>,
+    pub transfer_offset: u64,
+    pub transfer_count: u64,
 
     pub cc_payments: Vec<CreditCardPayment>,
     pub cc_payment_table_state: TableState,
     pub cc_payment_form: Option<CcPaymentForm>,
+    pub cc_payment_offset: u64,
+    pub cc_payment_count: u64,
+
+    pub category_names: HashMap<i32, String>,
 
     pub notifications: Vec<Notification>,
     pub notification_selection: usize,
@@ -226,10 +235,16 @@ impl App {
             transfers: Vec::new(),
             transfer_table_state: TableState::default().with_selected(0),
             transfer_form: None,
+            transfer_offset: 0,
+            transfer_count: 0,
 
             cc_payments: Vec::new(),
             cc_payment_table_state: TableState::default().with_selected(0),
             cc_payment_form: None,
+            cc_payment_offset: 0,
+            cc_payment_count: 0,
+
+            category_names: HashMap::new(),
 
             notifications: Vec::new(),
             notification_selection: 0,
@@ -247,49 +262,114 @@ impl App {
     }
 
     pub fn category_name(&self, id: i32) -> &str {
-        self.categories
-            .iter()
-            .find(|c| c.id == id)
-            .map(|c| c.name.as_str())
+        self.category_names
+            .get(&id)
+            .map(|s| s.as_str())
             .unwrap_or("?")
     }
 
     pub async fn load_data(&mut self) -> anyhow::Result<()> {
-        use crate::db::{accounts, budgets, categories, installments, notifications, recurring};
+        use crate::db::{
+            accounts, budgets, categories, credit_card_payments, installments, notifications,
+            recurring, transfers,
+        };
         use crate::models::BudgetPeriod;
-
-        self.accounts = accounts::list_accounts(&self.pool).await?;
-        self.categories = categories::list_categories(&self.pool).await?;
-        self.balances = accounts::compute_all_balances(&self.pool).await?;
-        self.account_names = accounts::list_all_account_names(&self.pool).await?;
-
-        self.budgets = budgets::list_budgets(&self.pool).await?;
 
         let today = Local::now().date_naive();
         let (weekly_start, _) = BudgetPeriod::Weekly.date_range(today);
         let (monthly_start, _) = BudgetPeriod::Monthly.date_range(today);
         let (yearly_start, _) = BudgetPeriod::Yearly.date_range(today);
-        self.budget_spent = budgets::compute_all_spending(
-            &self.pool,
-            weekly_start,
-            monthly_start,
-            yearly_start,
-            today,
-        )
-        .await?;
 
-        self.pending_recurring = recurring::list_pending(&self.pool, today).await?;
-        self.recurring_list = recurring::list_recurring(&self.pool).await?;
+        let pool = &self.pool;
+        let transfer_offset = self.transfer_offset as i64;
+        let cc_payment_offset = self.cc_payment_offset as i64;
+
+        let (
+            accts,
+            cats,
+            bals,
+            acct_names,
+            budgets_list,
+            budget_spent_map,
+            pending,
+            rec_list,
+            inst_list,
+            transfer_list,
+            transfer_cnt,
+            cc_list,
+            cc_cnt,
+            notifs,
+        ) = tokio::try_join!(
+            accounts::list_accounts(pool),
+            categories::list_categories(pool),
+            accounts::compute_all_balances(pool),
+            accounts::list_all_account_names(pool),
+            budgets::list_budgets(pool),
+            budgets::compute_all_spending(pool, weekly_start, monthly_start, yearly_start, today),
+            recurring::list_pending(pool, today),
+            recurring::list_recurring(pool),
+            installments::list_installment_purchases(pool),
+            transfers::list_transfers(pool, PAGE_SIZE as i64, transfer_offset),
+            transfers::count_transfers(pool),
+            credit_card_payments::list_all_payments(pool, PAGE_SIZE as i64, cc_payment_offset),
+            credit_card_payments::count_payments(pool),
+            notifications::list_unread(pool),
+        )?;
+
+        self.accounts = accts;
+        self.categories = cats;
+        self.balances = bals;
+        self.account_names = acct_names;
+        self.category_names = self
+            .categories
+            .iter()
+            .map(|c| (c.id, c.name.clone()))
+            .collect();
+        self.budgets = budgets_list;
+        self.budget_spent = budget_spent_map;
+        self.pending_recurring = pending;
+        self.recurring_list = rec_list;
+        self.installments = inst_list;
+        self.transfers = transfer_list;
+        self.transfer_count = transfer_cnt;
+        self.cc_payments = cc_list;
+        self.cc_payment_count = cc_cnt;
+        self.notifications = notifs;
+
         self.load_transactions().await?;
 
-        self.installments = installments::list_installment_purchases(&self.pool).await?;
-        self.transfers = crate::db::transfers::list_transfers(&self.pool, 100, 0).await?;
-        self.cc_payments =
-            crate::db::credit_card_payments::list_all_payments(&self.pool, 100, 0).await?;
-
-        self.notifications = notifications::list_unread(&self.pool).await?;
-
         Ok(())
+    }
+
+    pub async fn load_transfers(&mut self) -> anyhow::Result<()> {
+        self.transfers = crate::db::transfers::list_transfers(
+            &self.pool,
+            PAGE_SIZE as i64,
+            self.transfer_offset as i64,
+        )
+        .await?;
+        self.transfer_count = crate::db::transfers::count_transfers(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn load_cc_payments(&mut self) -> anyhow::Result<()> {
+        self.cc_payments = crate::db::credit_card_payments::list_all_payments(
+            &self.pool,
+            PAGE_SIZE as i64,
+            self.cc_payment_offset as i64,
+        )
+        .await?;
+        self.cc_payment_count = crate::db::credit_card_payments::count_payments(&self.pool).await?;
+        Ok(())
+    }
+
+    pub fn tick(&mut self) {
+        if let Some(msg) = &mut self.status_message {
+            msg.ticks_remaining = msg.ticks_remaining.saturating_sub(1);
+            if msg.ticks_remaining == 0 {
+                self.status_message = None;
+            }
+        }
     }
 
     pub async fn load_transactions(&mut self) -> anyhow::Result<()> {
@@ -310,9 +390,6 @@ impl App {
     }
 
     pub async fn handle_key(&mut self, key: KeyEvent) -> anyhow::Result<()> {
-        // Clear status message on any key press
-        self.status_message = None;
-
         // Popup takes priority over everything
         if let Some(popup) = &mut self.confirm_popup {
             if let Some(confirmed) = popup.handle_key(key.code) {

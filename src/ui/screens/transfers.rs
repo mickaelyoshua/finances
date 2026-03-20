@@ -15,7 +15,7 @@ use crate::{
     ui::{
         App,
         app::{
-            ConfirmAction, InputMode, StatusMessage, clamp_selection, cycle_index,
+            ConfirmAction, InputMode, PAGE_SIZE, StatusMessage, clamp_selection, cycle_index,
             move_table_selection,
         },
         components::{
@@ -155,7 +155,17 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         ],
     )
     .header(header)
-    .block(Block::default().borders(Borders::ALL).title("Transfers"))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(if app.transfer_count > 0 {
+                let start = app.transfer_offset + 1;
+                let end = app.transfer_offset + app.transfers.len() as u64;
+                format!("Transfers ({start}-{end} of {})", app.transfer_count)
+            } else {
+                "Transfers (0)".to_string()
+            }),
+    )
     .row_highlight_style(
         Style::new()
             .bg(Color::DarkGray)
@@ -264,21 +274,44 @@ impl App {
                 }
             }
             KeyCode::Char('x') => {
-                let acct_names = &self.account_names;
-                match crate::export::export_transfers(&self.transfers, |id| {
-                    acct_names.get(&id).cloned().unwrap_or_else(|| "?".into())
-                }) {
-                    Ok(path) => {
-                        self.status_message = Some(StatusMessage::info(format!(
-                            "Exported {} transfers to {}",
-                            self.transfers.len(),
-                            path.display()
-                        )));
+                match crate::db::transfers::list_all_transfers(&self.pool).await {
+                    Ok(all_transfers) => {
+                        let acct_names = &self.account_names;
+                        match crate::export::export_transfers(&all_transfers, |id| {
+                            acct_names.get(&id).cloned().unwrap_or_else(|| "?".into())
+                        }) {
+                            Ok(path) => {
+                                self.status_message = Some(StatusMessage::info(format!(
+                                    "Exported {} transfers to {}",
+                                    all_transfers.len(),
+                                    path.display()
+                                )));
+                            }
+                            Err(e) => {
+                                self.status_message =
+                                    Some(StatusMessage::error(format!("Export failed: {e}")));
+                            }
+                        }
                     }
                     Err(e) => {
                         self.status_message =
                             Some(StatusMessage::error(format!("Export failed: {e}")));
                     }
+                }
+            }
+            KeyCode::PageUp => {
+                if self.transfer_offset > 0 {
+                    self.transfer_offset = self.transfer_offset.saturating_sub(PAGE_SIZE);
+                    self.load_transfers().await?;
+                    self.transfer_table_state.select(Some(0));
+                }
+            }
+            KeyCode::PageDown => {
+                let next = self.transfer_offset + PAGE_SIZE;
+                if next < self.transfer_count {
+                    self.transfer_offset = next;
+                    self.load_transfers().await?;
+                    self.transfer_table_state.select(Some(0));
                 }
             }
             _ => {}
