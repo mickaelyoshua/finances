@@ -140,8 +140,8 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(
             " [PROD] ",
             Style::new()
-                .fg(Color::White)
-                .bg(Color::Red)
+                .fg(Color::Black)
+                .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )
     } else {
