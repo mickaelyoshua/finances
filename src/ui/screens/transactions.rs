@@ -172,14 +172,22 @@ impl Default for TransactionFilter {
 
 /// Cycle through `None → Some(0) → … → Some(len-1) → None`.
 /// Used by filter selectors so "All" (None) is reachable by cycling past the last option.
-pub fn cycle_option(current: Option<usize>, len: usize) -> Option<usize> {
+/// Direction: `Left` cycles backward, `Right`/`Space` cycle forward.
+pub fn cycle_option(current: Option<usize>, len: usize, code: KeyCode) -> Option<usize> {
     if len == 0 {
         return None;
     }
-    match current {
-        None => Some(0),
-        Some(i) if i + 1 < len => Some(i + 1),
-        Some(_) => None,
+    match code {
+        KeyCode::Left => match current {
+            None => Some(len - 1),
+            Some(0) => None,
+            Some(i) => Some(i - 1),
+        },
+        _ => match current {
+            None => Some(0),
+            Some(i) if i + 1 < len => Some(i + 1),
+            Some(_) => None,
+        },
     }
 }
 
@@ -798,26 +806,26 @@ impl App {
                     if is_toggle_key(key.code) {
                         let len = self.accounts.len();
                         self.transaction_filter.account_idx =
-                            cycle_option(self.transaction_filter.account_idx, len);
+                            cycle_option(self.transaction_filter.account_idx, len, key.code);
                     }
                 }
                 FilterField::Category => {
                     if is_toggle_key(key.code) {
                         let len = self.categories.len();
                         self.transaction_filter.category_idx =
-                            cycle_option(self.transaction_filter.category_idx, len);
+                            cycle_option(self.transaction_filter.category_idx, len, key.code);
                     }
                 }
                 FilterField::TransactionType => {
                     if is_toggle_key(key.code) {
                         self.transaction_filter.transaction_type_idx =
-                            cycle_option(self.transaction_filter.transaction_type_idx, 2);
+                            cycle_option(self.transaction_filter.transaction_type_idx, 2, key.code);
                     }
                 }
                 FilterField::PaymentMethod => {
                     if is_toggle_key(key.code) {
                         self.transaction_filter.payment_method_idx =
-                            cycle_option(self.transaction_filter.payment_method_idx, 6);
+                            cycle_option(self.transaction_filter.payment_method_idx, 6, key.code);
                     }
                 }
             },

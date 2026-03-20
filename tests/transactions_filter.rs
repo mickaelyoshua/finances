@@ -2,39 +2,71 @@
 //! verifying filter-bar state is correctly mapped to `TransactionFilterParams`.
 
 use chrono::{NaiveDate, Utc};
+use crossterm::event::KeyCode;
 use rust_decimal_macros::dec;
 
 use finances::models::*;
 use finances::ui::screens::transactions::{TransactionFilter, cycle_option};
 
-// ── cycle_option ─────────────────────────────────────────────────
+// ── cycle_option (forward — Right key) ──────────────────────────
 
 #[test]
 fn cycle_option_none_starts_at_zero() {
-    assert_eq!(cycle_option(None, 3), Some(0));
+    assert_eq!(cycle_option(None, 3, KeyCode::Right), Some(0));
 }
 
 #[test]
 fn cycle_option_increments() {
-    assert_eq!(cycle_option(Some(0), 3), Some(1));
-    assert_eq!(cycle_option(Some(1), 3), Some(2));
+    assert_eq!(cycle_option(Some(0), 3, KeyCode::Right), Some(1));
+    assert_eq!(cycle_option(Some(1), 3, KeyCode::Right), Some(2));
 }
 
 #[test]
 fn cycle_option_wraps_to_none() {
-    assert_eq!(cycle_option(Some(2), 3), None);
+    assert_eq!(cycle_option(Some(2), 3, KeyCode::Right), None);
 }
 
 #[test]
 fn cycle_option_empty_list_stays_none() {
-    assert_eq!(cycle_option(None, 0), None);
-    assert_eq!(cycle_option(Some(0), 0), None);
+    assert_eq!(cycle_option(None, 0, KeyCode::Right), None);
+    assert_eq!(cycle_option(Some(0), 0, KeyCode::Right), None);
 }
 
 #[test]
 fn cycle_option_single_element() {
-    assert_eq!(cycle_option(None, 1), Some(0));
-    assert_eq!(cycle_option(Some(0), 1), None);
+    assert_eq!(cycle_option(None, 1, KeyCode::Right), Some(0));
+    assert_eq!(cycle_option(Some(0), 1, KeyCode::Right), None);
+}
+
+// ── cycle_option (backward — Left key) ──────────────────────────
+
+#[test]
+fn cycle_option_left_from_none_goes_to_last() {
+    assert_eq!(cycle_option(None, 3, KeyCode::Left), Some(2));
+}
+
+#[test]
+fn cycle_option_left_decrements() {
+    assert_eq!(cycle_option(Some(2), 3, KeyCode::Left), Some(1));
+    assert_eq!(cycle_option(Some(1), 3, KeyCode::Left), Some(0));
+}
+
+#[test]
+fn cycle_option_left_wraps_to_none() {
+    assert_eq!(cycle_option(Some(0), 3, KeyCode::Left), None);
+}
+
+#[test]
+fn cycle_option_left_empty_stays_none() {
+    assert_eq!(cycle_option(None, 0, KeyCode::Left), None);
+}
+
+// ── cycle_option (Space behaves like Right) ─────────────────────
+
+#[test]
+fn cycle_option_space_goes_forward() {
+    assert_eq!(cycle_option(None, 3, KeyCode::Char(' ')), Some(0));
+    assert_eq!(cycle_option(Some(0), 3, KeyCode::Char(' ')), Some(1));
 }
 
 // ── TransactionFilter::to_params ─────────────────────────────────
