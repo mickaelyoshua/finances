@@ -79,3 +79,23 @@ fn parse_amount_garbage_rejected() {
 fn parse_amount_empty_rejected() {
     assert!(parse_positive_amount("").is_err());
 }
+
+#[test]
+fn parse_amount_brl_thousands_format() {
+    // BRL style: dots as thousands separators, comma as decimal
+    assert_eq!(parse_positive_amount("1.234,56").unwrap(), dec!(1234.56));
+}
+
+#[test]
+fn parse_amount_brl_millions_format() {
+    assert_eq!(
+        parse_positive_amount("1.234.567,89").unwrap(),
+        dec!(1234567.89)
+    );
+}
+
+#[test]
+fn parse_amount_brl_no_decimal() {
+    // BRL style with comma but no fractional part
+    assert_eq!(parse_positive_amount("1.000,00").unwrap(), dec!(1000.00));
+}
