@@ -27,10 +27,35 @@ use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
 pub async fn create_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {
-    PgPoolOptions::new()
-        .max_connections(5)
-        .connect(database_url)
-        .await
+    let max_retries = 3;
+    let mut last_err = None;
+    for attempt in 1..=max_retries {
+        match PgPoolOptions::new()
+            .max_connections(5)
+            .acquire_timeout(std::time::Duration::from_secs(60))
+            .connect(database_url)
+            .await
+        {
+            Ok(pool) => {
+                // Verify the connection is actually alive
+                match sqlx::query("SELECT 1").execute(&pool).await {
+                    Ok(_) => return Ok(pool),
+                    Err(e) => {
+                        tracing::warn!("connection attempt {attempt}/{max_retries} connected but ping failed: {e}");
+                        last_err = Some(e);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("connection attempt {attempt}/{max_retries} failed: {e}");
+                last_err = Some(e);
+            }
+        }
+        if attempt < max_retries {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
+    }
+    Err(last_err.unwrap())
 }
 
 pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
