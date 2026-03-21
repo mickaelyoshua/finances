@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
     // Log file rotates daily in ~/.local/share/finances/
     let log_dir = dirs_log_dir();
     let file_appender = tracing_appender::rolling::daily(&log_dir, "finances.log");
-    let _guard = init_tracing(file_appender);
+    init_tracing(file_appender);
 
     let cfg = Config::parse();
     let database_url = config::database_url(cfg.prod);
@@ -198,21 +198,15 @@ fn dirs_log_dir() -> std::path::PathBuf {
 ///
 /// Log level defaults to `info` and can be overridden with the `RUST_LOG`
 /// environment variable (e.g. `RUST_LOG=debug`).
-fn init_tracing(
-    file_appender: tracing_appender::rolling::RollingFileAppender,
-) -> tracing_appender::non_blocking::WorkerGuard {
-    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-
+fn init_tracing(file_appender: tracing_appender::rolling::RollingFileAppender) {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
-        .with_writer(non_blocking)
+        .with_writer(file_appender)
         .with_ansi(false) // no colour codes in log files
         .init();
-
-    guard
 }
 
 async fn run_loop(
