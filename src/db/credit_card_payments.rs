@@ -82,6 +82,26 @@ pub async fn list_all_cc_payments(pool: &PgPool) -> Result<Vec<CreditCardPayment
     .await
 }
 
+/// Fetch credit card payments for an account within a date range.
+pub async fn list_payments_in_range(
+    pool: &PgPool,
+    account_id: i32,
+    date_from: NaiveDate,
+    date_to: NaiveDate,
+) -> Result<Vec<CreditCardPayment>, sqlx::Error> {
+    sqlx::query_as::<_, CreditCardPayment>(
+        "SELECT * FROM credit_card_payments
+         WHERE account_id = $1
+           AND date BETWEEN $2 AND $3
+         ORDER BY date DESC, id DESC",
+    )
+    .bind(account_id)
+    .bind(date_from)
+    .bind(date_to)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn delete_payment(pool: &PgPool, id: i32) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM credit_card_payments WHERE id = $1")
         .bind(id)

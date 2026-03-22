@@ -180,3 +180,49 @@ pub async fn sum_expenses_by_category(
     .await?;
     Ok(row.0.unwrap_or_default())
 }
+
+/// Fetch all credit card transactions for an account within a date range.
+pub async fn list_credit_by_account(
+    pool: &PgPool,
+    account_id: i32,
+    date_from: NaiveDate,
+    date_to: NaiveDate,
+) -> Result<Vec<Transaction>, sqlx::Error> {
+    sqlx::query_as::<_, Transaction>(
+        "SELECT * FROM transactions
+         WHERE account_id = $1
+           AND payment_method = 'credit'
+           AND date BETWEEN $2 AND $3
+         ORDER BY date DESC, id DESC",
+    )
+    .bind(account_id)
+    .bind(date_from)
+    .bind(date_to)
+    .fetch_all(pool)
+    .await
+}
+
+/// Sum credit card expenses and incomes for an account in a date range.
+/// Returns (total_expenses, total_incomes).
+pub async fn sum_credit_by_account_in_range(
+    pool: &PgPool,
+    account_id: i32,
+    date_from: NaiveDate,
+    date_to: NaiveDate,
+) -> Result<(Decimal, Decimal), sqlx::Error> {
+    let row: (Option<Decimal>, Option<Decimal>) = sqlx::query_as(
+        "SELECT
+            SUM(CASE WHEN transaction_type = 'expense' THEN amount ELSE 0 END),
+            SUM(CASE WHEN transaction_type = 'income' THEN amount ELSE 0 END)
+         FROM transactions
+         WHERE account_id = $1
+           AND payment_method = 'credit'
+           AND date BETWEEN $2 AND $3",
+    )
+    .bind(account_id)
+    .bind(date_from)
+    .bind(date_to)
+    .fetch_one(pool)
+    .await?;
+    Ok((row.0.unwrap_or_default(), row.1.unwrap_or_default()))
+}
