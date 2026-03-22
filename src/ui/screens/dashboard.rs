@@ -11,34 +11,48 @@ use rust_decimal::prelude::ToPrimitive;
 use crate::ui::{App, components::format::format_brl};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    if app.notifications.is_empty() {
-        // Original 3-section layout
-        let [top, bottom] = Layout::vertical([Constraint::Min(5), Constraint::Min(5)]).areas(area);
-        let [budget_area, recurring_area] =
-            Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
-                .areas(bottom);
+    let has_notifs = !app.notifications.is_empty();
+    let has_cc = !app.dashboard_current_statements.is_empty();
 
-        render_balances(frame, top, app);
-        render_budgets(frame, budget_area, app);
-        render_recurring(frame, recurring_area, app);
+    let cc_height = if has_cc {
+        (app.dashboard_current_statements.len() as u16 + 2).min(8) // +2 for border
     } else {
-        // 4-section layout: notifications at top
-        let notif_height = (app.notifications.len() as u16 + 2).min(10); // +2 for border, cap at 10
-        let [notif_area, top, bottom] = Layout::vertical([
-            Constraint::Length(notif_height),
-            Constraint::Min(5),
-            Constraint::Min(5),
-        ])
-        .areas(area);
-        let [budget_area, recurring_area] =
-            Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
-                .areas(bottom);
+        0
+    };
 
-        render_notifications(frame, notif_area, app);
-        render_balances(frame, top, app);
-        render_budgets(frame, budget_area, app);
-        render_recurring(frame, recurring_area, app);
+    let mut constraints: Vec<Constraint> = Vec::new();
+    if has_notifs {
+        let notif_height = (app.notifications.len() as u16 + 2).min(10);
+        constraints.push(Constraint::Length(notif_height));
     }
+    constraints.push(Constraint::Min(5)); // balances
+    if has_cc {
+        constraints.push(Constraint::Length(cc_height));
+    }
+    constraints.push(Constraint::Min(5)); // budget + recurring
+
+    let areas = Layout::vertical(constraints).split(area);
+    let mut idx = 0;
+
+    if has_notifs {
+        render_notifications(frame, areas[idx], app);
+        idx += 1;
+    }
+
+    render_balances(frame, areas[idx], app);
+    idx += 1;
+
+    if has_cc {
+        render_current_statements(frame, areas[idx], app);
+        idx += 1;
+    }
+
+    let [budget_area, recurring_area] =
+        Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .areas(areas[idx]);
+
+    render_budgets(frame, budget_area, app);
+    render_recurring(frame, recurring_area, app);
 }
 
 fn render_notifications(frame: &mut Frame, area: Rect, app: &App) {
@@ -78,11 +92,20 @@ fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
     let header = Row::new(["Account", "Type", "Checking", "Credit Used"])
         .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
-    let rows: Vec<Row> = app
+    let balances: Vec<(Decimal, Decimal)> = app
         .accounts
         .iter()
-        .map(|acc| {
-            let (checking, credit) = app.balances.get(&acc.id).copied().unwrap_or_default();
+        .map(|acc| app.balances.get(&acc.id).copied().unwrap_or_default())
+        .collect();
+
+    let total_checking: Decimal = balances.iter().map(|(c, _)| c).sum();
+    let total_credit: Decimal = balances.iter().map(|(_, c)| c).sum();
+
+    let mut rows: Vec<Row> = app
+        .accounts
+        .iter()
+        .zip(&balances)
+        .map(|(acc, &(checking, credit))| {
             let credit_cell = if acc.has_credit_card {
                 let limit = acc.credit_limit.unwrap_or(Decimal::ZERO);
                 format!("{} / {}", format_brl(credit), format_brl(limit))
@@ -97,6 +120,19 @@ fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
             ])
         })
         .collect();
+
+    // Totals row
+    if !app.accounts.is_empty() {
+        rows.push(
+            Row::new([
+                "TOTAL".to_string(),
+                String::new(),
+                format_brl(total_checking),
+                format_brl(total_credit),
+            ])
+            .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        );
+    }
 
     let table = Table::new(
         rows,
@@ -115,6 +151,44 @@ fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
     );
 
     frame.render_widget(table, area);
+}
+
+fn render_current_statements(frame: &mut Frame, area: Rect, app: &App) {
+    let lines: Vec<Line> = app
+        .dashboard_current_statements
+        .iter()
+        .map(|(name, stmt)| {
+            Line::from(vec![
+                Span::styled(format!("  {:<14}", name), Style::new().fg(Color::White)),
+                Span::styled(
+                    format!(
+                        "{} - {}",
+                        stmt.period_start.format("%d/%m"),
+                        stmt.period_end.format("%d/%m")
+                    ),
+                    Style::new().fg(Color::DarkGray),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    format_brl(stmt.statement_total),
+                    if stmt.statement_total > Decimal::ZERO {
+                        Style::new().fg(Color::Red)
+                    } else {
+                        Style::new().fg(Color::Green)
+                    },
+                ),
+                Span::styled(
+                    format!("  due {}", stmt.due_date.format("%d/%m")),
+                    Style::new().fg(Color::DarkGray),
+                ),
+            ])
+        })
+        .collect();
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Current CC Statements (Open)");
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn render_budgets(frame: &mut Frame, area: Rect, app: &App) {
