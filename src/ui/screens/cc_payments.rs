@@ -367,6 +367,9 @@ impl App {
         self.cc_payment_form = None;
         self.input_mode = InputMode::Normal;
         self.load_data().await?;
+        if self.screen == crate::ui::app::Screen::CreditCardStatements {
+            self.load_cc_statements().await?;
+        }
         Ok(())
     }
 

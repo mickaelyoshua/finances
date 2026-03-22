@@ -132,6 +132,7 @@ fn render_content(frame: &mut Frame, area: Rect, app: &mut App) {
         Screen::Recurring => super::screens::recurring::render(frame, area, app),
         Screen::Transfers => super::screens::transfers::render(frame, area, app),
         Screen::CreditCardPayments => super::screens::cc_payments::render(frame, area, app),
+        Screen::CreditCardStatements => super::screens::cc_statements::render(frame, area, app),
     }
 }
 
@@ -189,7 +190,7 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
             spans.extend([
                 Span::styled(" q", Style::new().fg(Color::Yellow)),
                 Span::raw(" Quit "),
-                Span::styled("1-9", Style::new().fg(Color::Yellow)),
+                Span::styled("0-9", Style::new().fg(Color::Yellow)),
                 Span::raw(" Screen "),
                 Span::styled("← →", Style::new().fg(Color::Yellow)),
                 Span::raw(" Navigate"),

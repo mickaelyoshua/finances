@@ -2,6 +2,7 @@ pub mod accounts;
 pub mod budgets;
 pub mod categories;
 pub mod cc_payments;
+pub mod cc_statements;
 pub mod dashboard;
 pub mod installments;
 pub mod recurring;

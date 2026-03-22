@@ -18,8 +18,13 @@ use crate::{
 };
 
 use super::screens::{
-    accounts::AccountForm, budgets::BudgetForm, categories::CategoryForm,
-    cc_payments::CcPaymentForm, installments::InstallmentForm, recurring::RecurringForm,
+    accounts::AccountForm,
+    budgets::BudgetForm,
+    categories::CategoryForm,
+    cc_payments::CcPaymentForm,
+    cc_statements::{CreditCardStatement, StatementsView},
+    installments::InstallmentForm,
+    recurring::RecurringForm,
     transfers::TransferForm,
 };
 
@@ -34,10 +39,11 @@ pub enum Screen {
     Recurring,
     Transfers,
     CreditCardPayments,
+    CreditCardStatements,
 }
 
 impl Screen {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Dashboard,
         Self::Transactions,
         Self::Accounts,
@@ -47,6 +53,7 @@ impl Screen {
         Self::Recurring,
         Self::Transfers,
         Self::CreditCardPayments,
+        Self::CreditCardStatements,
     ];
 
     pub fn label(self) -> &'static str {
@@ -59,7 +66,8 @@ impl Screen {
             Self::Installments => "Installments",
             Self::Recurring => "Recurring",
             Self::Transfers => "Transfers",
-            Self::CreditCardPayments => "Credit Card Payments",
+            Self::CreditCardPayments => "CC Payments",
+            Self::CreditCardStatements => "CC Statements",
         }
     }
 
@@ -179,6 +187,17 @@ pub struct App {
     pub cc_payment_offset: u64,
     pub cc_payment_count: u64,
 
+    // CC Statements screen
+    pub cc_statements: Vec<CreditCardStatement>,
+    pub cc_statement_table_state: TableState,
+    pub cc_statement_account_idx: usize,
+    pub cc_statement_view: StatementsView,
+    pub cc_statement_detail_txns: Vec<Transaction>,
+    pub cc_statement_detail_table_state: TableState,
+
+    // Dashboard: current open statement per CC account (account_name, statement)
+    pub dashboard_current_statements: Vec<(String, CreditCardStatement)>,
+
     pub category_names: HashMap<i32, String>,
 
     pub notifications: Vec<Notification>,
@@ -243,6 +262,15 @@ impl App {
             cc_payment_form: None,
             cc_payment_offset: 0,
             cc_payment_count: 0,
+
+            cc_statements: Vec::new(),
+            cc_statement_table_state: TableState::default().with_selected(0),
+            cc_statement_account_idx: 0,
+            cc_statement_view: StatementsView::List,
+            cc_statement_detail_txns: Vec::new(),
+            cc_statement_detail_table_state: TableState::default().with_selected(0),
+
+            dashboard_current_statements: Vec::new(),
 
             category_names: HashMap::new(),
 
@@ -338,7 +366,68 @@ impl App {
 
         self.load_transactions().await?;
 
+        // Compute current CC statements for dashboard
+        self.dashboard_current_statements = self.compute_current_statements().await?;
+
         Ok(())
+    }
+
+    /// Build the current (open) CC statement for each credit card account.
+    /// Used by the dashboard to show a summary; runs on every `refresh_all_data`.
+    async fn compute_current_statements(
+        &self,
+    ) -> anyhow::Result<Vec<(String, CreditCardStatement)>> {
+        use crate::db::{
+            clamped_day, latest_closing_date, next_month, statement_due_date, transactions,
+        };
+        use chrono::Datelike;
+
+        let today = Local::now().date_naive();
+        let mut results = Vec::new();
+
+        for acc in &self.accounts {
+            if !acc.has_credit_card {
+                continue;
+            }
+            let billing_day = acc.billing_day.unwrap_or(1) as u32;
+            let due_day = acc.due_day.unwrap_or(1) as u32;
+
+            let latest_close = latest_closing_date(today, billing_day);
+
+            let current_start = latest_close.succ_opt().unwrap();
+            if current_start > today {
+                continue;
+            }
+
+            let (next_y, next_m) = next_month(latest_close.year(), latest_close.month());
+            let next_close = clamped_day(next_y, next_m, billing_day);
+            let due = statement_due_date(next_y, next_m, billing_day, due_day);
+
+            let (charges, credits) = transactions::sum_credit_by_account_in_range(
+                &self.pool,
+                acc.id,
+                current_start,
+                today,
+            )
+            .await?;
+
+            let total = charges - credits;
+            results.push((
+                acc.name.clone(),
+                CreditCardStatement {
+                    period_start: current_start,
+                    period_end: next_close,
+                    due_date: due,
+                    total_charges: charges,
+                    total_credits: credits,
+                    statement_total: total,
+                    paid_amount: Decimal::ZERO,
+                    is_current: true,
+                },
+            ));
+        }
+
+        Ok(results)
     }
 
     pub async fn load_transfers(&mut self) -> anyhow::Result<()> {
@@ -475,8 +564,26 @@ impl App {
                     self.screen = screen;
                 }
             }
-            KeyCode::Left | KeyCode::Char('h') => self.screen = self.screen.prev(),
-            KeyCode::Right | KeyCode::Char('l') => self.screen = self.screen.next(),
+            KeyCode::Char('0') => {
+                self.screen = Screen::CreditCardStatements;
+                self.load_cc_statements().await?;
+            }
+            KeyCode::Left | KeyCode::Char('h')
+                if key.code == KeyCode::Left || self.screen != Screen::CreditCardStatements =>
+            {
+                self.screen = self.screen.prev();
+                if self.screen == Screen::CreditCardStatements {
+                    self.load_cc_statements().await?;
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l')
+                if key.code == KeyCode::Right || self.screen != Screen::CreditCardStatements =>
+            {
+                self.screen = self.screen.next();
+                if self.screen == Screen::CreditCardStatements {
+                    self.load_cc_statements().await?;
+                }
+            }
             KeyCode::Char('g') => self.pending_g = true,
             KeyCode::Char('G') => {
                 self.jump_to_last_row();
@@ -491,6 +598,7 @@ impl App {
                 Screen::Recurring => self.handle_recurring_key(key.code).await?,
                 Screen::Transfers => self.handle_transfers_key(key.code).await?,
                 Screen::CreditCardPayments => self.handle_cc_payments_key(key.code).await?,
+                Screen::CreditCardStatements => self.handle_cc_statements_key(key.code).await?,
             },
         }
         Ok(())
@@ -515,6 +623,15 @@ impl App {
             Screen::CreditCardPayments => {
                 Some((&mut self.cc_payment_table_state, self.cc_payments.len()))
             }
+            Screen::CreditCardStatements => match self.cc_statement_view {
+                StatementsView::List => {
+                    Some((&mut self.cc_statement_table_state, self.cc_statements.len()))
+                }
+                StatementsView::Detail => Some((
+                    &mut self.cc_statement_detail_table_state,
+                    self.cc_statement_detail_txns.len(),
+                )),
+            },
         }
     }
 
@@ -665,8 +782,8 @@ pub(crate) fn is_toggle_key(code: KeyCode) -> bool {
 pub(crate) fn cycle_index(idx: &mut usize, len: usize, code: KeyCode) {
     if len > 0 {
         *idx = match code {
-            KeyCode::Left => (*idx + len - 1) % len,
-            _ => (*idx + 1) % len, // Space and Right go forward
+            KeyCode::Left | KeyCode::Char('h') => (*idx + len - 1) % len,
+            _ => (*idx + 1) % len, // Space, Right, 'l' go forward
         };
     }
 }
