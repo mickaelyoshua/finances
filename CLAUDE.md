@@ -39,7 +39,7 @@ in-place and will be used on the next startup.
 
 - **Pattern**: Elm/TEA — Event → Update (`handle_key`) → Render (`draw`)
 - **App struct**: single source of truth, caches DB data, refreshes after mutations
-- **Screens**: 9 screens (Dashboard, Transactions, Accounts, Categories, Budgets, Installments, Recurring, Transfers, CC Payments)
+- **Screens**: 10 screens (Dashboard, Transactions, Accounts, Categories, Budgets, Installments, Recurring, Transfers, CC Payments, CC Statements)
 - **InputMode**: `Normal` (navigation) vs `Editing` (form input)
 - **ConfirmAction enum**: tracks what a popup confirmation will do
 - **Forms**: per-screen form structs with validation; early-return for Esc/Enter before `if let Some(form)` to avoid borrow conflicts
