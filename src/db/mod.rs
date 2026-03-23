@@ -39,7 +39,12 @@ pub async fn create_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {
             Ok(pool) => {
                 // Verify the connection is actually alive
                 match sqlx::query("SELECT 1").execute(&pool).await {
-                    Ok(_) => return Ok(pool),
+                    Ok(_) => {
+                        if attempt > 1 {
+                            tracing::info!("connection succeeded on attempt {attempt}/{max_retries}");
+                        }
+                        return Ok(pool);
+                    }
                     Err(e) => {
                         tracing::warn!(
                             "connection attempt {attempt}/{max_retries} connected but ping failed: {e}"
