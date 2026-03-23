@@ -84,8 +84,8 @@ impl AccountForm {
 
         let billing_day = if self.has_credit_card {
             match self.billing_day.value.trim().parse::<i16>() {
-                Ok(v) if (1..=28).contains(&v) => Some(v),
-                _ => return Err("Billing day must be 1-28".into()),
+                Ok(v) if (1..=31).contains(&v) => Some(v),
+                _ => return Err("Billing day must be 1-31".into()),
             }
         } else {
             None
@@ -93,8 +93,8 @@ impl AccountForm {
 
         let due_day = if self.has_credit_card {
             match self.due_day.value.trim().parse::<i16>() {
-                Ok(v) if (1..=28).contains(&v) => Some(v),
-                _ => return Err("Due day must be 1-28".into()),
+                Ok(v) if (1..=31).contains(&v) => Some(v),
+                _ => return Err("Due day must be 1-31".into()),
             }
         } else {
             None
