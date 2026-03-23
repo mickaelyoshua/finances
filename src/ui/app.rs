@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::Local;
+use chrono::{Local, NaiveDate};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::TableState;
 use rust_decimal::Decimal;
@@ -102,6 +102,17 @@ pub enum ConfirmAction {
     DeactivateRecurring(i32),
     DeleteTransfer(i32),
     DeleteCreditCardPayment(i32),
+    PayCreditCardStatement {
+        account_id: i32,
+        amount: Decimal,
+        date: NaiveDate,
+        description: String,
+    },
+    UnpayCreditCardStatement {
+        account_id: i32,
+        pay_start: NaiveDate,
+        pay_end: NaiveDate,
+    },
 }
 
 pub struct StatusMessage {
@@ -508,6 +519,23 @@ impl App {
                         }
                         Some(ConfirmAction::DeleteCreditCardPayment(id)) => {
                             self.execute_delete_cc_payment(id).await?;
+                        }
+                        Some(ConfirmAction::PayCreditCardStatement {
+                            account_id,
+                            amount,
+                            date,
+                            description,
+                        }) => {
+                            self.execute_pay_cc_statement(account_id, amount, date, &description)
+                                .await?;
+                        }
+                        Some(ConfirmAction::UnpayCreditCardStatement {
+                            account_id,
+                            pay_start,
+                            pay_end,
+                        }) => {
+                            self.execute_unpay_cc_statement(account_id, pay_start, pay_end)
+                                .await?;
                         }
                         None => {}
                     }

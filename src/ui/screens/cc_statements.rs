@@ -20,7 +20,7 @@ use crate::{
         App,
         app::{InputMode, Screen, StatusMessage, clamp_selection, cycle_index, move_table_selection},
         components::format::format_brl,
-        screens::{cc_payments::CcPaymentForm, transactions::TransactionForm},
+        screens::transactions::TransactionForm,
     },
 };
 
@@ -395,7 +395,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     format_brl(s.balance_due()),
                 )),
                 Line::from(Span::styled(
-                    " [Enter] View transactions  [p] Pay  [h/l] Switch account",
+                    " [Enter] View transactions  [p] Pay  [u] Unpay  [h/l] Switch account",
                     Style::new().fg(Color::DarkGray),
                 )),
             ]
@@ -558,23 +558,76 @@ impl App {
                     .selected()
                     .and_then(|i| self.cc_statements.get(i))
                 {
-                    if stmt.is_current {
+                    if stmt.is_upcoming {
+                        self.status_message =
+                            Some(StatusMessage::error("Cannot pay an upcoming statement"));
+                    } else if stmt.is_current {
                         self.status_message =
                             Some(StatusMessage::error("Cannot pay an open statement"));
                     } else if stmt.balance_due() == Decimal::ZERO {
                         self.status_message =
                             Some(StatusMessage::info("Statement already fully paid"));
                     } else {
-                        let balance = stmt.balance_due();
-                        let label = stmt.label();
-                        let mut form = CcPaymentForm::new_create();
-                        form.account_idx = self.cc_statement_account_idx;
-                        form.amount.value = balance.to_string();
-                        form.amount.cursor = form.amount.value.len();
-                        form.description.value = format!("Fatura {}", label);
-                        form.description.cursor = form.description.value.len();
-                        self.cc_payment_form = Some(form);
-                        self.input_mode = InputMode::Editing;
+                        let cc_accounts: Vec<&crate::models::Account> =
+                            self.accounts.iter().filter(|a| a.has_credit_card).collect();
+                        if let Some(account) = cc_accounts.get(self.cc_statement_account_idx) {
+                            let balance = stmt.balance_due();
+                            let label = stmt.label();
+                            // Date the payment the day after the statement closes
+                            // so it falls within the correct attribution window.
+                            let pay_date = stmt.period_end.succ_opt().unwrap();
+                            self.confirm_action = Some(crate::ui::app::ConfirmAction::PayCreditCardStatement {
+                                account_id: account.id,
+                                amount: balance,
+                                date: pay_date,
+                                description: format!("Fatura {}", label),
+                            });
+                            self.confirm_popup = Some(crate::ui::components::popup::ConfirmPopup::new(
+                                format!("Pay statement {}? ({})", label, crate::ui::components::format::format_brl(balance)),
+                            ));
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('u') => {
+                if let Some((idx, stmt)) = self
+                    .cc_statement_table_state
+                    .selected()
+                    .and_then(|i| self.cc_statements.get(i).map(|s| (i, s)))
+                {
+                    if stmt.is_upcoming || stmt.is_current {
+                        self.status_message =
+                            Some(StatusMessage::error("Only closed statements can be unpaid"));
+                    } else if stmt.paid_amount == Decimal::ZERO {
+                        self.status_message =
+                            Some(StatusMessage::info("Statement has no payments"));
+                    } else {
+                        let cc_accounts: Vec<&crate::models::Account> =
+                            self.accounts.iter().filter(|a| a.has_credit_card).collect();
+                        if let Some(account) = cc_accounts.get(self.cc_statement_account_idx) {
+                            // Payment attribution window: from day after close to next newer close (or today)
+                            let pay_start = stmt.period_end.succ_opt().unwrap();
+                            let pay_end = if idx > 0 {
+                                let prev = &self.cc_statements[idx - 1];
+                                if prev.is_current || prev.is_upcoming {
+                                    Local::now().date_naive()
+                                } else {
+                                    prev.period_end
+                                }
+                            } else {
+                                Local::now().date_naive()
+                            };
+                            let label = stmt.label();
+                            let paid = stmt.paid_amount;
+                            self.confirm_action = Some(crate::ui::app::ConfirmAction::UnpayCreditCardStatement {
+                                account_id: account.id,
+                                pay_start,
+                                pay_end,
+                            });
+                            self.confirm_popup = Some(crate::ui::components::popup::ConfirmPopup::new(
+                                format!("Remove all payments for {}? ({})", label, crate::ui::components::format::format_brl(paid)),
+                            ));
+                        }
                     }
                 }
             }
@@ -682,6 +735,43 @@ impl App {
                 );
             }
         }
+        Ok(())
+    }
+
+    pub(crate) async fn execute_pay_cc_statement(
+        &mut self,
+        account_id: i32,
+        amount: Decimal,
+        date: NaiveDate,
+        description: &str,
+    ) -> anyhow::Result<()> {
+        db::credit_card_payments::create_payment(&self.pool, account_id, amount, date, description)
+            .await?;
+        tracing::info!(account_id, %amount, description, "credit card statement paid");
+        self.load_data().await?;
+        self.load_cc_statements().await?;
+        self.status_message = Some(StatusMessage::info("Statement paid"));
+        Ok(())
+    }
+
+    pub(crate) async fn execute_unpay_cc_statement(
+        &mut self,
+        account_id: i32,
+        pay_start: NaiveDate,
+        pay_end: NaiveDate,
+    ) -> anyhow::Result<()> {
+        let deleted = db::credit_card_payments::delete_payments_in_range(
+            &self.pool, account_id, pay_start, pay_end,
+        )
+        .await?;
+        tracing::info!(account_id, %pay_start, %pay_end, deleted, "credit card statement unpaid");
+        self.load_data().await?;
+        self.load_cc_statements().await?;
+        self.status_message = Some(StatusMessage::info(format!(
+            "Removed {} payment{}",
+            deleted,
+            if deleted == 1 { "" } else { "s" }
+        )));
         Ok(())
     }
 }
