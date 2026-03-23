@@ -423,6 +423,7 @@ impl App {
                     statement_total: total,
                     paid_amount: Decimal::ZERO,
                     is_current: true,
+                    is_upcoming: false,
                 },
             ));
         }
@@ -663,6 +664,13 @@ impl App {
 
     async fn handle_editing_key(&mut self, key: KeyEvent) -> anyhow::Result<()> {
         if key.code == KeyCode::Esc {
+            // If installment form is confirming, dismiss confirmation only
+            if let Some(form) = &mut self.installment_form
+                && form.confirmation.is_some()
+            {
+                form.confirmation = None;
+                return Ok(());
+            }
             self.account_form = None;
             self.category_form = None;
             self.transaction_form = None;

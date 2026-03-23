@@ -1,4 +1,4 @@
-use chrono::{Local, NaiveDate};
+use chrono::{Datelike, Local, NaiveDate};
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
@@ -11,6 +11,7 @@ use rust_decimal::Decimal;
 use tracing::info;
 
 use crate::{
+    db::{self, clamped_day, latest_closing_date, next_month, statement_due_date},
     models::{Category, CategoryType},
     ui::{
         App,
@@ -48,6 +49,13 @@ impl InstallmentField {
     ];
 }
 
+pub struct InstallmentConfirmation {
+    pub validated: ValidatedInstallment,
+    pub per_installment: Decimal,
+    pub parcela_dues: Vec<(i16, NaiveDate)>, // (parcela_number, due_date)
+    pub confirmed: bool,                     // true = Yes highlighted
+}
+
 pub struct InstallmentForm {
     pub description: InputField,
     pub total_amount: InputField,
@@ -57,8 +65,10 @@ pub struct InstallmentForm {
     pub category_idx: usize,
     pub active_field: usize,
     pub error: Option<String>,
+    pub confirmation: Option<InstallmentConfirmation>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct ValidatedInstallment {
     pub description: String,
     pub total_amount: Decimal,
@@ -131,12 +141,13 @@ impl InstallmentForm {
             description: InputField::new("Description"),
             total_amount: InputField::new("Total Amount"),
             installment_count: InputField::new("Installments"),
-            first_date: InputField::new("First Date")
+            first_date: InputField::new("Purchase Date")
                 .with_value(today.format("%d-%m-%Y").to_string()),
             account_idx: 0,
             category_idx: 0,
             active_field: 0,
             error: None,
+            confirmation: None,
         }
     }
 
@@ -146,8 +157,12 @@ impl InstallmentForm {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    if app.installment_form.is_some() {
-        render_form(frame, area, app);
+    if let Some(form) = &app.installment_form {
+        if form.confirmation.is_some() {
+            render_confirmation(frame, area, app);
+        } else {
+            render_form(frame, area, app);
+        }
     } else {
         render_list(frame, area, app);
     }
@@ -161,7 +176,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         "Description",
         "Total",
         "# Inst.",
-        "First Date",
+        "Purchase Date",
         "Account",
         "Category",
     ])
@@ -233,7 +248,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     ip.installment_count,
                 )),
                 Line::from(format!(
-                    " First: {} | Created: {}",
+                    " Purchase: {} | Created: {}",
                     ip.first_installment_date.format("%d-%m-%Y"),
                     ip.created_at.format("%d-%m-%Y %H:%M"),
                 )),
@@ -304,6 +319,74 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
     push_form_error(&mut lines, &form.error);
 
     let block = Block::default().borders(Borders::ALL).title(title);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_confirmation(frame: &mut Frame, area: Rect, app: &mut App) {
+    let form = app.installment_form.as_ref().unwrap();
+    let conf = form.confirmation.as_ref().unwrap();
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    lines.push(Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            &conf.validated.description,
+            Style::new().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(
+                " — {} x {}",
+                conf.validated.installment_count,
+                format_brl(conf.per_installment)
+            ),
+            Style::new().fg(Color::DarkGray),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    for (parcela, due) in &conf.parcela_dues {
+        lines.push(Line::from(format!(
+            "  Parcela {:>2} → due {}",
+            parcela,
+            due.format("%d/%m/%Y")
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " Is this correct?",
+        Style::new().fg(Color::Yellow),
+    )));
+    lines.push(Line::from(""));
+
+    let yes_style = if conf.confirmed {
+        Style::new()
+            .fg(Color::Black)
+            .bg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(Color::DarkGray)
+    };
+    let no_style = if !conf.confirmed {
+        Style::new()
+            .fg(Color::Black)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(Color::DarkGray)
+    };
+
+    lines.push(Line::from(vec![
+        Span::raw("   "),
+        Span::styled(" Yes ", yes_style),
+        Span::raw("  "),
+        Span::styled(" No ", no_style),
+    ]));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Confirm Installment");
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -392,6 +475,15 @@ impl App {
 
     pub(crate) fn handle_installment_form_key(&mut self, code: KeyCode) {
         let form = self.installment_form.as_mut().unwrap();
+
+        // If confirming, only handle Left/Right toggle
+        if let Some(conf) = &mut form.confirmation {
+            if matches!(code, KeyCode::Left | KeyCode::Right) {
+                conf.confirmed = !conf.confirmed;
+            }
+            return;
+        }
+
         match code {
             KeyCode::Tab | KeyCode::Down => {
                 if form.active_field < InstallmentField::ALL.len() - 1 {
@@ -429,8 +521,56 @@ impl App {
     }
 
     pub(crate) async fn submit_installment_form(&mut self) -> anyhow::Result<()> {
-        use crate::db::installments;
+        // If already confirming, handle Yes/No
+        if self.installment_form.as_ref().unwrap().confirmation.is_some() {
+            let confirmed = self
+                .installment_form
+                .as_ref()
+                .unwrap()
+                .confirmation
+                .as_ref()
+                .unwrap()
+                .confirmed;
 
+            if confirmed {
+                // Take validated data and create
+                let validated = self
+                    .installment_form
+                    .as_mut()
+                    .unwrap()
+                    .confirmation
+                    .take()
+                    .unwrap()
+                    .validated;
+
+                db::installments::create_installment_purchase(
+                    &self.pool,
+                    validated.total_amount,
+                    validated.installment_count,
+                    &validated.description,
+                    validated.category_id,
+                    validated.account_id,
+                    validated.first_date,
+                )
+                .await?;
+                info!(
+                    desc = %validated.description,
+                    total = %validated.total_amount,
+                    count = validated.installment_count,
+                    "installment purchase created"
+                );
+
+                self.installment_form = None;
+                self.input_mode = InputMode::Normal;
+                self.load_data().await?;
+            } else {
+                // No selected — return to editing
+                self.installment_form.as_mut().unwrap().confirmation = None;
+            }
+            return Ok(());
+        }
+
+        // Validate and show confirmation
         let form = self.installment_form.as_ref().unwrap();
         let validated = match form.validate(&self.accounts, &self.categories) {
             Ok(v) => v,
@@ -440,26 +580,45 @@ impl App {
             }
         };
 
-        installments::create_installment_purchase(
-            &self.pool,
-            validated.total_amount,
-            validated.installment_count,
-            &validated.description,
-            validated.category_id,
-            validated.account_id,
-            validated.first_date,
-        )
-        .await?;
-        info!(
-            desc = %validated.description,
-            total = %validated.total_amount,
-            count = validated.installment_count,
-            "installment purchase created"
-        );
+        // Compute per-installment amount
+        let per_installment =
+            (validated.total_amount / Decimal::from(validated.installment_count)).round_dp(2);
 
-        self.installment_form = None;
-        self.input_mode = InputMode::Normal;
-        self.load_data().await?;
+        // Compute which statement each parcela falls into
+        let account = self
+            .accounts
+            .iter()
+            .find(|a| a.id == validated.account_id)
+            .unwrap();
+        let billing_day = account.billing_day.unwrap_or(1) as u32;
+        let due_day = account.due_day.unwrap_or(1) as u32;
+
+        let mut parcela_dues = Vec::with_capacity(validated.installment_count as usize);
+        for i in 1..=validated.installment_count {
+            let date = db::add_months(validated.first_date, (i - 1) as u32);
+            let close = latest_closing_date(date, billing_day);
+            let statement_close = if date > close {
+                let (ny, nm) = next_month(close.year(), close.month());
+                clamped_day(ny, nm, billing_day)
+            } else {
+                close
+            };
+            let due = statement_due_date(
+                statement_close.year(),
+                statement_close.month(),
+                billing_day,
+                due_day,
+            );
+            parcela_dues.push((i, due));
+        }
+
+        self.installment_form.as_mut().unwrap().confirmation = Some(InstallmentConfirmation {
+            validated,
+            per_installment,
+            parcela_dues,
+            confirmed: false, // default to No (safer)
+        });
+
         Ok(())
     }
 
