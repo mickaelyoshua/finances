@@ -316,10 +316,8 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(Paragraph::new(selector_text), selector_area);
 
     // Statement table
-    let header = Row::new([
-        "Period", "Due", "Charges", "Credits", "Total", "Paid", "Balance", "Status",
-    ])
-    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let header = Row::new(["Period", "Total", "Balance", "Status"])
+        .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .cc_statements
@@ -337,11 +335,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     s.period_start.format("%d/%m"),
                     s.period_end.format("%d/%m/%y")
                 ),
-                s.due_date.format("%d/%m").to_string(),
-                format_brl(s.total_charges),
-                format_brl(s.total_credits),
                 format_brl(s.statement_total),
-                format_brl(s.paid_amount),
                 format_brl(s.balance_due()),
                 s.status_label().to_string(),
             ])
@@ -362,11 +356,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         rows,
         [
             Constraint::Length(18), // Period
-            Constraint::Length(7),  // Due
-            Constraint::Length(14), // Charges
-            Constraint::Length(14), // Credits
             Constraint::Length(14), // Total
-            Constraint::Length(14), // Paid
             Constraint::Length(14), // Balance
             Constraint::Length(10), // Status
         ],
@@ -423,8 +413,9 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
-    let [header_area, table_area] =
-        Layout::vertical([Constraint::Length(3), Constraint::Min(5)]).areas(area);
+    let [header_area, table_area, detail_area] =
+        Layout::vertical([Constraint::Length(3), Constraint::Min(5), Constraint::Length(3)])
+            .areas(area);
 
     // Header with statement info
     let stmt_info = if let Some(idx) = app.cc_statement_table_state.selected() {
@@ -438,21 +429,15 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
             let account_name = cc_accounts
                 .get(app.cc_statement_account_idx)
                 .unwrap_or(&"?");
-            vec![
-                Line::from(format!(
-                    " {} — {} | {} - {} | Total: {} | Status: {}",
-                    account_name,
-                    s.label(),
-                    s.period_start.format("%d/%m/%Y"),
-                    s.period_end.format("%d/%m/%Y"),
-                    format_brl(s.statement_total),
-                    s.status_label(),
-                )),
-                Line::from(Span::styled(
-                    " [Esc] Back  [Enter] Edit / Go to installment",
-                    Style::new().fg(Color::DarkGray),
-                )),
-            ]
+            vec![Line::from(format!(
+                " {} — {} | {} - {} | Total: {} | Status: {}",
+                account_name,
+                s.label(),
+                s.period_start.format("%d/%m/%Y"),
+                s.period_end.format("%d/%m/%Y"),
+                format_brl(s.statement_total),
+                s.status_label(),
+            ))]
         } else {
             vec![Line::from(" No statement selected.")]
         }
@@ -511,6 +496,19 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
     );
 
     frame.render_stateful_widget(table, table_area, &mut app.cc_statement_detail_table_state);
+
+    // Detail pane with key guide
+    let detail_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Details");
+    let detail_content = vec![Line::from(Span::styled(
+        " [Esc] Back  [Enter] Go to transaction / installment  [j/k] Navigate",
+        Style::new().fg(Color::DarkGray),
+    ))];
+    frame.render_widget(
+        Paragraph::new(detail_content).block(detail_block),
+        detail_area,
+    );
 }
 
 // ── Key handling & loaders (impl App) ─────────────────────────────
