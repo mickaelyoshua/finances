@@ -15,7 +15,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let has_cc = !app.dashboard_current_statements.is_empty();
 
     let cc_height = if has_cc {
-        (app.dashboard_current_statements.len() as u16 + 2).min(8) // +2 for border
+        // +2 for border, +2 for separator + total line
+        (app.dashboard_current_statements.len() as u16 + 4).min(10)
     } else {
         0
     };
@@ -172,7 +173,7 @@ fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_current_statements(frame: &mut Frame, area: Rect, app: &App) {
-    let lines: Vec<Line> = app
+    let mut lines: Vec<Line> = app
         .dashboard_current_statements
         .iter()
         .map(|(name, stmt)| {
@@ -202,6 +203,30 @@ fn render_current_statements(frame: &mut Frame, area: Rect, app: &App) {
             ])
         })
         .collect();
+
+    if app.dashboard_current_statements.len() > 1 {
+        let total: Decimal = app
+            .dashboard_current_statements
+            .iter()
+            .map(|(_, s)| s.statement_total)
+            .sum();
+        lines.push(Line::from(Span::styled(
+            "  ──────────────────────────────────────────",
+            Style::new().fg(Color::DarkGray),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {:<14}", "Total"), Style::new().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::raw("              "),
+            Span::styled(
+                format_brl(total),
+                if total > Decimal::ZERO {
+                    Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::new().fg(Color::Green).add_modifier(Modifier::BOLD)
+                },
+            ),
+        ]));
+    }
 
     let block = Block::default()
         .borders(Borders::ALL)
