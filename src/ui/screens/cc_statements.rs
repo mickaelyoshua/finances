@@ -18,9 +18,9 @@ use crate::{
     models::Account,
     ui::{
         App,
-        app::{InputMode, StatusMessage, clamp_selection, cycle_index, move_table_selection},
+        app::{InputMode, Screen, StatusMessage, clamp_selection, cycle_index, move_table_selection},
         components::format::format_brl,
-        screens::cc_payments::CcPaymentForm,
+        screens::{cc_payments::CcPaymentForm, transactions::TransactionForm},
     },
 };
 
@@ -143,8 +143,9 @@ pub async fn build_statements(
             }
         }
 
-        // Payment attribution: payments made between this close+1 and the next close
-        // are credited to this statement.
+        // Payment attribution: card bills are paid after the statement closes,
+        // so payments between this close+1 and the next-newer close date
+        // are credited to this statement (not the one they fall within).
         let pay_start = close_date.succ_opt().unwrap();
         let pay_end = if close_date == &latest_close {
             today
@@ -448,7 +449,7 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
                     s.status_label(),
                 )),
                 Line::from(Span::styled(
-                    " [Esc] Back to statements",
+                    " [Esc] Back  [Enter] Edit / Go to installment",
                     Style::new().fg(Color::DarkGray),
                 )),
             ]
@@ -599,6 +600,34 @@ impl App {
                     self.cc_statement_detail_txns.len(),
                     1,
                 );
+            }
+            KeyCode::Enter => {
+                if let Some(txn) = self
+                    .cc_statement_detail_table_state
+                    .selected()
+                    .and_then(|i| self.cc_statement_detail_txns.get(i))
+                {
+                    if let Some(ip_id) = txn.installment_purchase_id {
+                        // Navigate to Installments screen and select the parent purchase
+                        self.screen = Screen::Installments;
+                        if let Some(pos) = self.installments.iter().position(|ip| ip.id == ip_id) {
+                            self.installment_table_state.select(Some(pos));
+                        }
+                    } else {
+                        // Regular transaction — open edit form on Transactions screen
+                        let txn = txn.clone();
+                        self.transaction_form = Some(TransactionForm::new_edit(
+                            &txn,
+                            &self.accounts,
+                            &self.categories,
+                        ));
+                        self.screen = Screen::Transactions;
+                        self.input_mode = InputMode::Editing;
+                        self.load_transactions().await?;
+                    }
+                    self.cc_statement_view = StatementsView::List;
+                    self.cc_statement_detail_txns.clear();
+                }
             }
             KeyCode::Esc => {
                 self.cc_statement_view = StatementsView::List;
