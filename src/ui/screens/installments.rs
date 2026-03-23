@@ -12,7 +12,7 @@ use tracing::info;
 
 use crate::{
     db::{self, clamped_day, latest_closing_date, next_month, statement_due_date},
-    models::{Category, CategoryType},
+    models::{Account, Category, CategoryType, InstallmentPurchase},
     ui::{
         App,
         app::{
@@ -27,6 +27,12 @@ use crate::{
         },
     },
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallmentFormMode {
+    Create,
+    Edit(i32),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstallmentField {
@@ -57,6 +63,7 @@ pub struct InstallmentConfirmation {
 }
 
 pub struct InstallmentForm {
+    pub mode: InstallmentFormMode,
     pub description: InputField,
     pub total_amount: InputField,
     pub installment_count: InputField,
@@ -81,7 +88,7 @@ pub struct ValidatedInstallment {
 impl InstallmentForm {
     pub fn validate(
         &self,
-        accounts: &[crate::models::Account],
+        accounts: &[Account],
         categories: &[Category],
     ) -> Result<ValidatedInstallment, String> {
         let description = self.description.value.trim().to_string();
@@ -109,7 +116,7 @@ impl InstallmentForm {
             .map_err(|_| "Invalid date (use DD-MM-YYYY)".to_string())?;
 
         // Only accounts with credit card
-        let credit_accounts: Vec<&crate::models::Account> =
+        let credit_accounts: Vec<&Account> =
             accounts.iter().filter(|a| a.has_credit_card).collect();
         let account_id = credit_accounts
             .get(self.account_idx)
@@ -138,6 +145,7 @@ impl InstallmentForm {
     pub fn new_create() -> Self {
         let today = Local::now().date_naive();
         Self {
+            mode: InstallmentFormMode::Create,
             description: InputField::new("Description"),
             total_amount: InputField::new("Total Amount"),
             installment_count: InputField::new("Installments"),
@@ -145,6 +153,39 @@ impl InstallmentForm {
                 .with_value(today.format("%d-%m-%Y").to_string()),
             account_idx: 0,
             category_idx: 0,
+            active_field: 0,
+            error: None,
+            confirmation: None,
+        }
+    }
+
+    pub fn new_edit(ip: &InstallmentPurchase, accounts: &[Account], categories: &[Category]) -> Self {
+        let credit_accounts: Vec<&Account> =
+            accounts.iter().filter(|a| a.has_credit_card).collect();
+        let account_idx = credit_accounts
+            .iter()
+            .position(|a| a.id == ip.account_id)
+            .unwrap_or(0);
+
+        let expense_categories: Vec<&Category> = categories
+            .iter()
+            .filter(|c| c.parsed_type() == CategoryType::Expense)
+            .collect();
+        let category_idx = expense_categories
+            .iter()
+            .position(|c| c.id == ip.category_id)
+            .unwrap_or(0);
+
+        Self {
+            mode: InstallmentFormMode::Edit(ip.id),
+            description: InputField::new("Description").with_value(&ip.description),
+            total_amount: InputField::new("Total Amount").with_value(ip.total_amount.to_string()),
+            installment_count: InputField::new("Installments")
+                .with_value(ip.installment_count.to_string()),
+            first_date: InputField::new("Purchase Date")
+                .with_value(ip.first_installment_date.format("%d-%m-%Y").to_string()),
+            account_idx,
+            category_idx,
             active_field: 0,
             error: None,
             confirmation: None,
@@ -253,7 +294,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     ip.created_at.format("%d-%m-%Y %H:%M"),
                 )),
                 Line::from(Span::styled(
-                    " [n] New  [d] Delete  [x] Export",
+                    " [n] New  [e] Edit  [d] Delete  [x] Export",
                     Style::new().fg(Color::DarkGray),
                 )),
             ]
@@ -271,7 +312,10 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
     let form = app.installment_form.as_ref().unwrap();
 
-    let title = "New Installment Purchase";
+    let title = match form.mode {
+        InstallmentFormMode::Create => "New Installment Purchase",
+        InstallmentFormMode::Edit(_) => "Edit Installment Purchase",
+    };
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -289,13 +333,24 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .filter(|a| a.has_credit_card)
                     .map(|a| a.name.as_str())
                     .collect();
-                render_selector(
-                    "Account",
-                    &names,
-                    form.account_idx,
-                    active,
-                    "no accounts with credit card",
-                )
+                if matches!(form.mode, InstallmentFormMode::Edit(_)) {
+                    let name = names.get(form.account_idx).unwrap_or(&"?");
+                    Line::from(vec![
+                        Span::styled(" Account: ", Style::new().fg(Color::DarkGray)),
+                        Span::styled(
+                            format!("{} (locked)", name),
+                            Style::new().fg(Color::DarkGray),
+                        ),
+                    ])
+                } else {
+                    render_selector(
+                        "Account",
+                        &names,
+                        form.account_idx,
+                        active,
+                        "no accounts with credit card",
+                    )
+                }
             }
             InstallmentField::Category => {
                 let names: Vec<&str> = app
@@ -384,9 +439,11 @@ fn render_confirmation(frame: &mut Frame, area: Rect, app: &mut App) {
         Span::styled(" No ", no_style),
     ]));
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Confirm Installment");
+    let title = match form.mode {
+        InstallmentFormMode::Create => "Confirm Installment",
+        InstallmentFormMode::Edit(_) => "Confirm Installment Edit",
+    };
+    let block = Block::default().borders(Borders::ALL).title(title);
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -424,6 +481,33 @@ impl App {
                         Some(StatusMessage::error("Create an expense category first"));
                 } else {
                     self.installment_form = Some(InstallmentForm::new_create());
+                    self.input_mode = InputMode::Editing;
+                }
+            }
+            KeyCode::Char('e') => {
+                let has_credit_account = self.accounts.iter().any(|a| a.has_credit_card);
+                let has_expense_cat = self
+                    .categories
+                    .iter()
+                    .any(|c| c.parsed_type() == CategoryType::Expense);
+                if !has_credit_account {
+                    self.status_message = Some(StatusMessage::error(
+                        "No account with credit card available",
+                    ));
+                } else if !has_expense_cat {
+                    self.status_message =
+                        Some(StatusMessage::error("Create an expense category first"));
+                } else if let Some(ip) = self
+                    .installment_table_state
+                    .selected()
+                    .and_then(|i| self.installments.get(i))
+                {
+                    let ip = ip.clone();
+                    self.installment_form = Some(InstallmentForm::new_edit(
+                        &ip,
+                        &self.accounts,
+                        &self.categories,
+                    ));
                     self.input_mode = InputMode::Editing;
                 }
             }
@@ -501,7 +585,7 @@ impl App {
                 InstallmentField::InstallmentCount => form.installment_count.handle_key(code),
                 InstallmentField::FirstDate => form.first_date.handle_key(code),
                 InstallmentField::Account => {
-                    if is_toggle_key(code) {
+                    if matches!(form.mode, InstallmentFormMode::Create) && is_toggle_key(code) {
                         let len = self.accounts.iter().filter(|a| a.has_credit_card).count();
                         cycle_index(&mut form.account_idx, len, code);
                     }
@@ -520,8 +604,10 @@ impl App {
         }
     }
 
+    /// Two-phase submit: first call validates the form and shows a confirmation
+    /// screen with per-parcela due dates; second call (when user picks Yes)
+    /// executes the create/update. Picking No returns to the form.
     pub(crate) async fn submit_installment_form(&mut self) -> anyhow::Result<()> {
-        // If already confirming, handle Yes/No
         if self.installment_form.as_ref().unwrap().confirmation.is_some() {
             let confirmed = self
                 .installment_form
@@ -533,7 +619,6 @@ impl App {
                 .confirmed;
 
             if confirmed {
-                // Take validated data and create
                 let validated = self
                     .installment_form
                     .as_mut()
@@ -542,23 +627,47 @@ impl App {
                     .take()
                     .unwrap()
                     .validated;
+                let mode = self.installment_form.as_ref().unwrap().mode;
 
-                db::installments::create_installment_purchase(
-                    &self.pool,
-                    validated.total_amount,
-                    validated.installment_count,
-                    &validated.description,
-                    validated.category_id,
-                    validated.account_id,
-                    validated.first_date,
-                )
-                .await?;
-                info!(
-                    desc = %validated.description,
-                    total = %validated.total_amount,
-                    count = validated.installment_count,
-                    "installment purchase created"
-                );
+                match mode {
+                    InstallmentFormMode::Create => {
+                        db::installments::create_installment_purchase(
+                            &self.pool,
+                            validated.total_amount,
+                            validated.installment_count,
+                            &validated.description,
+                            validated.category_id,
+                            validated.account_id,
+                            validated.first_date,
+                        )
+                        .await?;
+                        info!(
+                            desc = %validated.description,
+                            total = %validated.total_amount,
+                            count = validated.installment_count,
+                            "installment purchase created"
+                        );
+                    }
+                    InstallmentFormMode::Edit(id) => {
+                        db::installments::update_installment_purchase(
+                            &self.pool,
+                            id,
+                            validated.total_amount,
+                            validated.installment_count,
+                            &validated.description,
+                            validated.category_id,
+                            validated.first_date,
+                        )
+                        .await?;
+                        info!(
+                            id,
+                            desc = %validated.description,
+                            total = %validated.total_amount,
+                            count = validated.installment_count,
+                            "installment purchase updated"
+                        );
+                    }
+                }
 
                 self.installment_form = None;
                 self.input_mode = InputMode::Normal;
@@ -593,6 +702,8 @@ impl App {
         let billing_day = account.billing_day.unwrap_or(1) as u32;
         let due_day = account.due_day.unwrap_or(1) as u32;
 
+        // Map each parcela to the due date of the CC statement it will appear on.
+        // A charge after the latest close falls into the next billing cycle.
         let mut parcela_dues = Vec::with_capacity(validated.installment_count as usize);
         for i in 1..=validated.installment_count {
             let date = db::add_months(validated.first_date, (i - 1) as u32);
