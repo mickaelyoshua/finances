@@ -194,7 +194,13 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             let (checking, credit) = app.balances.get(&acc.id).copied().unwrap_or_default();
             let credit_cell = if acc.has_credit_card {
                 let limit = acc.credit_limit.unwrap_or(Decimal::ZERO);
-                format!("{} / {}", format_brl(credit), format_brl(limit))
+                let free = limit - credit;
+                format!(
+                    "{} / {} ({} free)",
+                    format_brl(credit),
+                    format_brl(limit),
+                    format_brl(free)
+                )
             } else {
                 "-".to_string()
             };

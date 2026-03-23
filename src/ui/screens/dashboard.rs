@@ -100,6 +100,13 @@ fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
 
     let total_checking: Decimal = balances.iter().map(|(c, _)| c).sum();
     let total_credit: Decimal = balances.iter().map(|(_, c)| c).sum();
+    let total_limit: Decimal = app
+        .accounts
+        .iter()
+        .filter(|acc| acc.has_credit_card)
+        .map(|acc| acc.credit_limit.unwrap_or(Decimal::ZERO))
+        .sum();
+    let total_free = total_limit - total_credit;
 
     let mut rows: Vec<Row> = app
         .accounts
@@ -108,7 +115,13 @@ fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
         .map(|(acc, &(checking, credit))| {
             let credit_cell = if acc.has_credit_card {
                 let limit = acc.credit_limit.unwrap_or(Decimal::ZERO);
-                format!("{} / {}", format_brl(credit), format_brl(limit))
+                let free = limit - credit;
+                format!(
+                    "{} / {} ({} free)",
+                    format_brl(credit),
+                    format_brl(limit),
+                    format_brl(free)
+                )
             } else {
                 "-".to_string()
             };
@@ -128,7 +141,12 @@ fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
                 "TOTAL".to_string(),
                 String::new(),
                 format_brl(total_checking),
-                format_brl(total_credit),
+                format!(
+                    "{} / {} ({} free)",
+                    format_brl(total_credit),
+                    format_brl(total_limit),
+                    format_brl(total_free)
+                ),
             ])
             .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         );
