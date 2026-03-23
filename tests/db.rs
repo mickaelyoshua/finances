@@ -810,6 +810,104 @@ async fn create_cc_payment_returns_row() {
     assert_eq!(p.description, "March bill");
 }
 
+#[tokio::test]
+async fn list_payments_in_range_filters_correctly() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+
+    // Three payments: Jan, Feb, Mar
+    credit_card_payments::create_payment(&pool, acc.id, dec!(100), date(2026, 1, 15), "Jan")
+        .await
+        .unwrap();
+    credit_card_payments::create_payment(&pool, acc.id, dec!(200), date(2026, 2, 15), "Feb")
+        .await
+        .unwrap();
+    credit_card_payments::create_payment(&pool, acc.id, dec!(300), date(2026, 3, 15), "Mar")
+        .await
+        .unwrap();
+
+    // Query Feb only
+    let payments = credit_card_payments::list_payments_in_range(
+        &pool,
+        acc.id,
+        date(2026, 2, 1),
+        date(2026, 2, 28),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(payments.len(), 1);
+    assert_eq!(payments[0].amount, dec!(200));
+}
+
+// ═══════════════════════════════════════
+// CREDIT CARD TRANSACTIONS
+// ═══════════════════════════════════════
+
+#[tokio::test]
+async fn list_credit_by_account_filters_by_method_and_range() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+    let cat = make_expense_category(&pool, "Food").await;
+
+    // Credit transaction in range
+    make_txn(
+        &pool, dec!(50), "Credit in range", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Credit, date(2026, 2, 15),
+    ).await;
+    // Pix transaction in range (should be excluded)
+    make_txn(
+        &pool, dec!(30), "Pix in range", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 2, 15),
+    ).await;
+    // Credit transaction out of range (should be excluded)
+    make_txn(
+        &pool, dec!(70), "Credit out of range", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Credit, date(2026, 3, 15),
+    ).await;
+
+    let results = transactions::list_credit_by_account(
+        &pool, acc.id, date(2026, 2, 1), date(2026, 2, 28),
+    ).await.unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].description, "Credit in range");
+    assert_eq!(results[0].amount, dec!(50));
+}
+
+#[tokio::test]
+async fn max_credit_date_returns_latest() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+    let cat = make_expense_category(&pool, "Food").await;
+
+    make_txn(
+        &pool, dec!(10), "Old", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Credit, date(2026, 1, 1),
+    ).await;
+    make_txn(
+        &pool, dec!(20), "New", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Credit, date(2026, 6, 15),
+    ).await;
+    // Pix should be ignored
+    make_txn(
+        &pool, dec!(30), "Pix", cat.id, acc.id,
+        TransactionType::Expense, PaymentMethod::Pix, date(2026, 12, 31),
+    ).await;
+
+    let max = transactions::max_credit_date(&pool, acc.id).await.unwrap();
+    assert_eq!(max, Some(date(2026, 6, 15)));
+}
+
+#[tokio::test]
+async fn max_credit_date_returns_none_when_empty() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+
+    let max = transactions::max_credit_date(&pool, acc.id).await.unwrap();
+    assert_eq!(max, None);
+}
+
 // ═══════════════════════════════════════
 // BUDGETS
 // ═══════════════════════════════════════
@@ -1008,6 +1106,166 @@ async fn delete_installment_cascades_transactions() {
         .await
         .unwrap();
     assert!(txns.is_empty());
+}
+
+#[tokio::test]
+async fn update_installment_changes_fields_and_regenerates() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+    let cat = make_expense_category(&pool, "Electronics").await;
+    let cat2 = make_expense_category(&pool, "Clothing").await;
+
+    let purchase = installments::create_installment_purchase(
+        &pool,
+        dec!(300),
+        3,
+        "Headphones",
+        cat.id,
+        acc.id,
+        date(2026, 3, 10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(purchase.installment_count, 3);
+
+    // Update: change description, amount, count, category, date
+    let updated = installments::update_installment_purchase(
+        &pool,
+        purchase.id,
+        dec!(500),
+        5,
+        "Jacket",
+        cat2.id,
+        date(2026, 4, 1),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(updated.id, purchase.id);
+    assert_eq!(updated.description, "Jacket");
+    assert_eq!(updated.total_amount, dec!(500));
+    assert_eq!(updated.installment_count, 5);
+    assert_eq!(updated.category_id, cat2.id);
+    assert_eq!(updated.first_installment_date, date(2026, 4, 1));
+    // Account unchanged
+    assert_eq!(updated.account_id, acc.id);
+
+    // Old 3 transactions should be gone, replaced by 5 new ones
+    let txns = installments::get_installment_transactions(&pool, purchase.id)
+        .await
+        .unwrap();
+    assert_eq!(txns.len(), 5);
+
+    // All new transactions use updated fields
+    for t in &txns {
+        assert_eq!(t.category_id, cat2.id);
+        assert_eq!(t.account_id, acc.id);
+        assert_eq!(t.transaction_type, "expense");
+        assert_eq!(t.payment_method, "credit");
+    }
+
+    // Descriptions follow "Jacket (n/5)" pattern
+    assert_eq!(txns[0].description, "Jacket (1/5)");
+    assert_eq!(txns[4].description, "Jacket (5/5)");
+
+    // Dates advance monthly from new first date
+    assert_eq!(txns[0].date, date(2026, 4, 1));
+    assert_eq!(txns[1].date, date(2026, 5, 1));
+    assert_eq!(txns[4].date, date(2026, 8, 1));
+
+    // Amounts sum to new total
+    let total: Decimal = txns.iter().map(|t| t.amount).sum();
+    assert_eq!(total, dec!(500));
+}
+
+#[tokio::test]
+async fn update_installment_preserves_account() {
+    let (_guard, pool) = setup().await;
+    let acc1 = make_checking(&pool, "Nubank").await;
+    let acc2 = make_checking(&pool, "PicPay").await;
+    let cat = make_expense_category(&pool, "Electronics").await;
+
+    let purchase = installments::create_installment_purchase(
+        &pool,
+        dec!(200),
+        2,
+        "Mouse",
+        cat.id,
+        acc1.id,
+        date(2026, 3, 1),
+    )
+    .await
+    .unwrap();
+
+    // Update does NOT take account_id — it stays as acc1
+    let updated = installments::update_installment_purchase(
+        &pool,
+        purchase.id,
+        dec!(250),
+        2,
+        "Mouse Pro",
+        cat.id,
+        date(2026, 3, 1),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(updated.account_id, acc1.id);
+
+    let txns = installments::get_installment_transactions(&pool, purchase.id)
+        .await
+        .unwrap();
+    for t in &txns {
+        assert_eq!(t.account_id, acc1.id);
+    }
+
+    // acc2 just needs to exist to prove the test is meaningful
+    let _ = acc2;
+}
+
+#[tokio::test]
+async fn update_installment_rounding_on_count_change() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+    let cat = make_expense_category(&pool, "Electronics").await;
+
+    let purchase = installments::create_installment_purchase(
+        &pool,
+        dec!(100),
+        3,
+        "Test",
+        cat.id,
+        acc.id,
+        date(2026, 1, 1),
+    )
+    .await
+    .unwrap();
+
+    // Change from 3 to 7 installments — R$100/7 = R$14.29 × 6 + R$14.26
+    let updated = installments::update_installment_purchase(
+        &pool,
+        purchase.id,
+        dec!(100),
+        7,
+        "Test",
+        cat.id,
+        date(2026, 1, 1),
+    )
+    .await
+    .unwrap();
+
+    let txns = installments::get_installment_transactions(&pool, updated.id)
+        .await
+        .unwrap();
+
+    assert_eq!(txns.len(), 7);
+    // First 6 are R$14.29, last absorbs remainder
+    for t in &txns[..6] {
+        assert_eq!(t.amount, dec!(14.29));
+    }
+    assert_eq!(txns[6].amount, dec!(14.26));
+    let total: Decimal = txns.iter().map(|t| t.amount).sum();
+    assert_eq!(total, dec!(100));
 }
 
 // ═══════════════════════════════════════
