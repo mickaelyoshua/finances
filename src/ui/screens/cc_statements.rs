@@ -37,6 +37,7 @@ pub struct CreditCardStatement {
     pub statement_total: Decimal,
     pub paid_amount: Decimal,
     pub is_current: bool,
+    pub is_upcoming: bool,
 }
 
 impl CreditCardStatement {
@@ -45,7 +46,9 @@ impl CreditCardStatement {
     }
 
     pub fn status_label(&self) -> &'static str {
-        if self.is_current {
+        if self.is_upcoming {
+            "Upcoming"
+        } else if self.is_current {
             "Open"
         } else if self.balance_due() == Decimal::ZERO {
             "Paid"
@@ -68,13 +71,13 @@ pub enum StatementsView {
 
 // ── Statement builder ─────────────────────────────────────────────
 
-/// Build the last `months` credit card statements for an account,
-/// plus the current (open) statement.
+/// Build credit card statements for an account: past closed, current open,
+/// and future projected (based on existing future transactions like installments).
 pub async fn build_statements(
     pool: &PgPool,
     account: &Account,
     months: usize,
-) -> anyhow::Result<Vec<CreditCardStatement>> {
+) -> anyhow::Result<(Vec<CreditCardStatement>, usize)> {
     let billing_day = account.billing_day.unwrap_or(1) as u32;
     let due_day = account.due_day.unwrap_or(1) as u32;
     let today = Local::now().date_naive();
@@ -91,14 +94,34 @@ pub async fn build_statements(
         closing_dates.push(clamped_day(y, m, billing_day));
     }
 
-    // Earliest start date (one more month back for the oldest statement's period)
+    // Build future closing dates based on the latest credit transaction date
+    let max_txn_date = db::transactions::max_credit_date(pool, account.id).await?;
+    let mut future_closing_dates: Vec<NaiveDate> = Vec::new();
+    if let Some(max_date) = max_txn_date {
+        let mut cursor = latest_close;
+        loop {
+            let (ny, nm) = next_month(cursor.year(), cursor.month());
+            cursor = clamped_day(ny, nm, billing_day);
+            if cursor <= latest_close {
+                break; // safety guard
+            }
+            future_closing_dates.push(cursor);
+            // Once cursor passes max_date, this closing date covers the last period
+            if cursor >= max_date {
+                break;
+            }
+        }
+    }
+
+    // Data range: from oldest past period to the latest future closing date
     let oldest_close = closing_dates.last().unwrap();
     let (start_period, _) = statement_period(*oldest_close, billing_day);
+    let end_date = future_closing_dates.last().copied().unwrap_or(today);
 
     // Fetch all credit transactions and CC payments in the full range
     let (transactions, payments) = tokio::try_join!(
-        db::transactions::list_credit_by_account(pool, account.id, start_period, today),
-        db::credit_card_payments::list_payments_in_range(pool, account.id, start_period, today),
+        db::transactions::list_credit_by_account(pool, account.id, start_period, end_date),
+        db::credit_card_payments::list_payments_in_range(pool, account.id, start_period, end_date),
     )?;
 
     let mut statements: Vec<CreditCardStatement> = Vec::with_capacity(months + 1);
@@ -121,14 +144,11 @@ pub async fn build_statements(
         }
 
         // Payment attribution: payments made between this close+1 and the next close
-        // are credited to this statement. Limitation: a late payment (made after the
-        // next close) will be attributed to the wrong statement since there is no
-        // explicit statement reference on credit_card_payments.
+        // are credited to this statement.
         let pay_start = close_date.succ_opt().unwrap();
         let pay_end = if close_date == &latest_close {
             today
         } else {
-            // Find the next closing date
             let idx = closing_dates.iter().position(|d| d == close_date).unwrap();
             if idx > 0 {
                 closing_dates[idx - 1]
@@ -153,20 +173,61 @@ pub async fn build_statements(
             statement_total: total,
             paid_amount: paid,
             is_current: false,
+            is_upcoming: false,
         });
     }
 
     // Build current (open) statement
     let current_start = latest_close.succ_opt().unwrap();
-    if current_start <= today {
-        let (next_y, next_m) = next_month(latest_close.year(), latest_close.month());
-        let next_close = clamped_day(next_y, next_m, billing_day);
-        let due = statement_due_date(next_y, next_m, billing_day, due_day);
+    let (next_y, next_m) = next_month(latest_close.year(), latest_close.month());
+    let current_close = clamped_day(next_y, next_m, billing_day);
+    let current_due = statement_due_date(next_y, next_m, billing_day, due_day);
+
+    let mut charges = Decimal::ZERO;
+    let mut credits = Decimal::ZERO;
+    for t in &transactions {
+        if t.date >= current_start && t.date <= today {
+            if t.parsed_type() == crate::models::TransactionType::Expense {
+                charges += t.amount;
+            } else {
+                credits += t.amount;
+            }
+        }
+    }
+
+    let total = charges - credits;
+    statements.insert(
+        0,
+        CreditCardStatement {
+            period_start: current_start,
+            period_end: current_close,
+            due_date: current_due,
+            total_charges: charges,
+            total_credits: credits,
+            statement_total: total,
+            paid_amount: Decimal::ZERO,
+            is_current: true,
+            is_upcoming: false,
+        },
+    );
+
+    // The current/open statement is at index 0 right now
+    let mut current_idx: usize = 0;
+
+    // Build future (upcoming) statements — nearest future first
+    for close_date in &future_closing_dates {
+        // Skip the close date that matches the current open statement
+        if *close_date == current_close {
+            continue;
+        }
+
+        let (period_start, period_end) = statement_period(*close_date, billing_day);
+        let due = statement_due_date(close_date.year(), close_date.month(), billing_day, due_day);
 
         let mut charges = Decimal::ZERO;
         let mut credits = Decimal::ZERO;
         for t in &transactions {
-            if t.date >= current_start && t.date <= today {
+            if t.date >= period_start && t.date <= period_end {
                 if t.parsed_type() == crate::models::TransactionType::Expense {
                     charges += t.amount;
                 } else {
@@ -176,22 +237,29 @@ pub async fn build_statements(
         }
 
         let total = charges - credits;
+        // Skip future statements with no charges
+        if total == Decimal::ZERO {
+            continue;
+        }
+
         statements.insert(
             0,
             CreditCardStatement {
-                period_start: current_start,
-                period_end: next_close,
+                period_start,
+                period_end,
                 due_date: due,
                 total_charges: charges,
                 total_credits: credits,
                 statement_total: total,
                 paid_amount: Decimal::ZERO,
-                is_current: true,
+                is_current: false,
+                is_upcoming: true,
             },
         );
+        current_idx += 1; // current statement shifts down
     }
 
-    Ok(statements)
+    Ok((statements, current_idx))
 }
 
 // ── Render ────────────────────────────────────────────────────────
@@ -257,6 +325,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .map(|s| {
             let status_style = match s.status_label() {
+                "Upcoming" => Style::new().fg(Color::Blue),
                 "Open" => Style::new().fg(Color::Cyan),
                 "Paid" => Style::new().fg(Color::Green),
                 _ => Style::new().fg(Color::Red),
@@ -298,7 +367,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             Constraint::Length(14), // Total
             Constraint::Length(14), // Paid
             Constraint::Length(14), // Balance
-            Constraint::Length(6),  // Status
+            Constraint::Length(10), // Status
         ],
     )
     .header(header)
@@ -544,7 +613,13 @@ impl App {
         let cc_accounts: Vec<&Account> =
             self.accounts.iter().filter(|a| a.has_credit_card).collect();
         if let Some(account) = cc_accounts.get(self.cc_statement_account_idx) {
-            self.cc_statements = build_statements(&self.pool, account, 12).await?;
+            let (stmts, current_idx) = build_statements(&self.pool, account, 12).await?;
+            self.cc_statements = stmts;
+            // Default selection to the current/open statement
+            if !self.cc_statements.is_empty() {
+                self.cc_statement_table_state
+                    .select(Some(current_idx.min(self.cc_statements.len() - 1)));
+            }
         } else {
             self.cc_statements.clear();
         }

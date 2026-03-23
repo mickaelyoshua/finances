@@ -366,6 +366,7 @@ fn make_statement(total: Decimal, paid: Decimal, is_current: bool) -> CreditCard
         statement_total: total,
         paid_amount: paid,
         is_current,
+        is_upcoming: false,
     }
 }
 
@@ -416,6 +417,13 @@ fn status_label_paid() {
 fn status_label_due() {
     let stmt = make_statement(dec!(500), dec!(200), false);
     assert_eq!(stmt.status_label(), "Due");
+}
+
+#[test]
+fn status_label_upcoming() {
+    let mut stmt = make_statement(dec!(500), Decimal::ZERO, false);
+    stmt.is_upcoming = true;
+    assert_eq!(stmt.status_label(), "Upcoming");
 }
 
 #[test]

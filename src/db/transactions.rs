@@ -202,6 +202,21 @@ pub async fn list_credit_by_account(
     .await
 }
 
+/// Latest credit transaction date for an account (used to determine future statements range).
+pub async fn max_credit_date(
+    pool: &PgPool,
+    account_id: i32,
+) -> Result<Option<NaiveDate>, sqlx::Error> {
+    let row: (Option<NaiveDate>,) = sqlx::query_as(
+        "SELECT MAX(date) FROM transactions
+         WHERE account_id = $1 AND payment_method = 'credit'",
+    )
+    .bind(account_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
 /// Sum credit card expenses and incomes for an account in a date range.
 /// Returns (total_expenses, total_incomes).
 pub async fn sum_credit_by_account_in_range(
