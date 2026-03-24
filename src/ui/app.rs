@@ -140,84 +140,112 @@ impl StatusMessage {
 
 pub(crate) const PAGE_SIZE: u64 = 100;
 
-/// Central application state — single source of truth for the TUI.
-///
-/// Caches all DB data in memory and refreshes after every mutation via `load_data()`.
-/// Owns form state, table selection state, and popup state for all seven screens.
-/// Passed as `&mut` to both key handlers and render functions because ratatui's
-/// `render_stateful_widget` requires mutable access to `TableState`.
+// ── Per-screen state structs ──────────────────────────────────────
+
+pub struct DashboardState {
+    pub current_statements: Vec<(String, CreditCardStatement)>,
+    pub notifications: Vec<Notification>,
+    pub notification_selection: usize,
+}
+
+pub struct TransactionScreenState {
+    pub items: Vec<Transaction>,
+    pub table_state: TableState,
+    pub form: Option<TransactionForm>,
+    pub offset: u64,
+    pub count: u64,
+    pub filter: TransactionFilter,
+}
+
+pub struct AccountScreenState {
+    pub table_state: TableState,
+    pub form: Option<AccountForm>,
+}
+
+pub struct CategoryScreenState {
+    pub table_state: TableState,
+    pub form: Option<CategoryForm>,
+}
+
+pub struct BudgetScreenState {
+    pub items: Vec<Budget>,
+    pub spent: HashMap<i32, Decimal>,
+    pub table_state: TableState,
+    pub form: Option<BudgetForm>,
+}
+
+pub struct InstallmentScreenState {
+    pub items: Vec<InstallmentPurchase>,
+    pub table_state: TableState,
+    pub form: Option<InstallmentForm>,
+}
+
+pub struct RecurringScreenState {
+    pub pending: Vec<RecurringTransaction>,
+    pub list: Vec<RecurringTransaction>,
+    pub table_state: TableState,
+    pub form: Option<RecurringForm>,
+}
+
+pub struct TransferScreenState {
+    pub items: Vec<Transfer>,
+    pub table_state: TableState,
+    pub form: Option<TransferForm>,
+    pub offset: u64,
+    pub count: u64,
+}
+
+pub struct CcPaymentScreenState {
+    pub items: Vec<CreditCardPayment>,
+    pub table_state: TableState,
+    pub form: Option<CcPaymentForm>,
+    pub offset: u64,
+    pub count: u64,
+}
+
+pub struct CcStatementScreenState {
+    pub items: Vec<CreditCardStatement>,
+    pub table_state: TableState,
+    pub account_idx: usize,
+    pub view: StatementsView,
+    pub detail_txns: Vec<Transaction>,
+    pub detail_table_state: TableState,
+}
+
+// ── Central application state ─────────────────────────────────────
+
+/// Single source of truth for the TUI.
+/// Per-screen state is grouped into dedicated structs for clarity.
 pub struct App {
     pub running: bool,
     pub screen: Screen,
     pub pool: PgPool,
     pub is_prod: bool,
-    pub accounts: Vec<Account>,
-    pub categories: Vec<Category>,
-    pub balances: HashMap<i32, (Decimal, Decimal)>, // account_id -> (checking, credit_used)
-    pub account_names: HashMap<i32, String>,        // all accounts (incl. inactive) for lookups
-    pub budgets: Vec<Budget>,
-    pub budget_spent: HashMap<i32, Decimal>, // budget_id -> spent in current period
-    pub budget_table_state: TableState,
-    pub budget_form: Option<BudgetForm>,
-
-    pub account_table_state: TableState,
-    pub account_form: Option<AccountForm>,
-
     pub input_mode: InputMode,
     pub confirm_popup: Option<ConfirmPopup>,
     pub confirm_action: Option<ConfirmAction>,
-
-    pub category_table_state: TableState,
-    pub category_form: Option<CategoryForm>,
-
-    pub transactions: Vec<Transaction>,
-    pub transaction_table_state: TableState,
-    pub transaction_form: Option<TransactionForm>,
-    pub transaction_offset: u64,
-    pub transaction_count: u64,
-    pub transaction_filter: TransactionFilter,
-
-    pub installments: Vec<InstallmentPurchase>,
-    pub installment_table_state: TableState,
-    pub installment_form: Option<InstallmentForm>,
-
-    pub pending_recurring: Vec<RecurringTransaction>,
-    pub recurring_list: Vec<RecurringTransaction>,
-    pub recurring_table_state: TableState,
-    pub recurring_form: Option<RecurringForm>,
-
-    pub transfers: Vec<Transfer>,
-    pub transfer_table_state: TableState,
-    pub transfer_form: Option<TransferForm>,
-    pub transfer_offset: u64,
-    pub transfer_count: u64,
-
-    pub cc_payments: Vec<CreditCardPayment>,
-    pub cc_payment_table_state: TableState,
-    pub cc_payment_form: Option<CcPaymentForm>,
-    pub cc_payment_offset: u64,
-    pub cc_payment_count: u64,
-
-    // CC Statements screen
-    pub cc_statements: Vec<CreditCardStatement>,
-    pub cc_statement_table_state: TableState,
-    pub cc_statement_account_idx: usize,
-    pub cc_statement_view: StatementsView,
-    pub cc_statement_detail_txns: Vec<Transaction>,
-    pub cc_statement_detail_table_state: TableState,
-
-    // Dashboard: current open statement per CC account (account_name, statement)
-    pub dashboard_current_statements: Vec<(String, CreditCardStatement)>,
-
-    pub category_names: HashMap<i32, String>,
-
-    pub notifications: Vec<Notification>,
-    pub notification_selection: usize,
-
     pub status_message: Option<StatusMessage>,
-
     /// Tracks pending 'g' keypress for vim-style `gg` (jump to first row).
     pub pending_g: bool,
+
+    // Shared data used across screens
+    pub accounts: Vec<Account>,
+    pub categories: Vec<Category>,
+    pub balances: HashMap<i32, (Decimal, Decimal)>,
+    pub account_names: HashMap<i32, String>,
+    pub category_names: HashMap<i32, String>,
+
+    // Per-screen state
+    pub dashboard: DashboardState,
+    pub txn: TransactionScreenState,
+    pub acct: AccountScreenState,
+    pub cat: CategoryScreenState,
+    pub budget: BudgetScreenState,
+    pub inst: InstallmentScreenState,
+    pub recur: RecurringScreenState,
+    pub xfer: TransferScreenState,
+    pub cc_pay: CcPaymentScreenState,
+    pub cc_stmt: CcStatementScreenState,
 }
 
 impl App {
@@ -227,69 +255,78 @@ impl App {
             screen: Screen::Dashboard,
             pool,
             is_prod,
+            input_mode: InputMode::Normal,
+            confirm_popup: None,
+            confirm_action: None,
+            status_message: None,
+            pending_g: false,
+
             accounts: Vec::new(),
             categories: Vec::new(),
             balances: HashMap::new(),
             account_names: HashMap::new(),
-            budgets: Vec::new(),
-            budget_spent: HashMap::new(),
-            budget_table_state: TableState::default().with_selected(0),
-            budget_form: None,
-
-            account_table_state: TableState::default().with_selected(0),
-            account_form: None,
-
-            input_mode: InputMode::Normal,
-            confirm_popup: None,
-            confirm_action: None,
-
-            category_table_state: TableState::default().with_selected(0),
-            category_form: None,
-
-            transactions: Vec::new(),
-            transaction_table_state: TableState::default().with_selected(0),
-            transaction_form: None,
-            transaction_offset: 0,
-            transaction_count: 0,
-            transaction_filter: TransactionFilter::new(),
-
-            installments: Vec::new(),
-            installment_table_state: TableState::default().with_selected(0),
-            installment_form: None,
-
-            pending_recurring: Vec::new(),
-            recurring_list: Vec::new(),
-            recurring_table_state: TableState::default().with_selected(0),
-            recurring_form: None,
-
-            transfers: Vec::new(),
-            transfer_table_state: TableState::default().with_selected(0),
-            transfer_form: None,
-            transfer_offset: 0,
-            transfer_count: 0,
-
-            cc_payments: Vec::new(),
-            cc_payment_table_state: TableState::default().with_selected(0),
-            cc_payment_form: None,
-            cc_payment_offset: 0,
-            cc_payment_count: 0,
-
-            cc_statements: Vec::new(),
-            cc_statement_table_state: TableState::default().with_selected(0),
-            cc_statement_account_idx: 0,
-            cc_statement_view: StatementsView::List,
-            cc_statement_detail_txns: Vec::new(),
-            cc_statement_detail_table_state: TableState::default().with_selected(0),
-
-            dashboard_current_statements: Vec::new(),
-
             category_names: HashMap::new(),
 
-            notifications: Vec::new(),
-            notification_selection: 0,
-
-            status_message: None,
-            pending_g: false,
+            dashboard: DashboardState {
+                current_statements: Vec::new(),
+                notifications: Vec::new(),
+                notification_selection: 0,
+            },
+            txn: TransactionScreenState {
+                items: Vec::new(),
+                table_state: TableState::default().with_selected(0),
+                form: None,
+                offset: 0,
+                count: 0,
+                filter: TransactionFilter::new(),
+            },
+            acct: AccountScreenState {
+                table_state: TableState::default().with_selected(0),
+                form: None,
+            },
+            cat: CategoryScreenState {
+                table_state: TableState::default().with_selected(0),
+                form: None,
+            },
+            budget: BudgetScreenState {
+                items: Vec::new(),
+                spent: HashMap::new(),
+                table_state: TableState::default().with_selected(0),
+                form: None,
+            },
+            inst: InstallmentScreenState {
+                items: Vec::new(),
+                table_state: TableState::default().with_selected(0),
+                form: None,
+            },
+            recur: RecurringScreenState {
+                pending: Vec::new(),
+                list: Vec::new(),
+                table_state: TableState::default().with_selected(0),
+                form: None,
+            },
+            xfer: TransferScreenState {
+                items: Vec::new(),
+                table_state: TableState::default().with_selected(0),
+                form: None,
+                offset: 0,
+                count: 0,
+            },
+            cc_pay: CcPaymentScreenState {
+                items: Vec::new(),
+                table_state: TableState::default().with_selected(0),
+                form: None,
+                offset: 0,
+                count: 0,
+            },
+            cc_stmt: CcStatementScreenState {
+                items: Vec::new(),
+                table_state: TableState::default().with_selected(0),
+                account_idx: 0,
+                view: StatementsView::List,
+                detail_txns: Vec::new(),
+                detail_table_state: TableState::default().with_selected(0),
+            },
         }
     }
 
@@ -320,8 +357,8 @@ impl App {
         let (yearly_start, _) = BudgetPeriod::Yearly.date_range(today);
 
         let pool = &self.pool;
-        let transfer_offset = self.transfer_offset as i64;
-        let cc_payment_offset = self.cc_payment_offset as i64;
+        let transfer_offset = self.xfer.offset as i64;
+        let cc_payment_offset = self.cc_pay.offset as i64;
 
         let (
             accts,
@@ -364,27 +401,27 @@ impl App {
             .iter()
             .map(|c| (c.id, c.name.clone()))
             .collect();
-        self.budgets = budgets_list;
-        self.budget_spent = budget_spent_map;
-        self.pending_recurring = pending;
-        self.recurring_list = rec_list;
-        self.installments = inst_list;
-        self.transfers = transfer_list;
-        self.transfer_count = transfer_cnt;
-        self.cc_payments = cc_list;
-        self.cc_payment_count = cc_cnt;
-        self.notifications = notifs;
+        self.budget.items = budgets_list;
+        self.budget.spent = budget_spent_map;
+        self.recur.pending = pending;
+        self.recur.list = rec_list;
+        self.inst.items = inst_list;
+        self.xfer.items = transfer_list;
+        self.xfer.count = transfer_cnt;
+        self.cc_pay.items = cc_list;
+        self.cc_pay.count = cc_cnt;
+        self.dashboard.notifications = notifs;
 
         self.load_transactions().await?;
 
         // Compute current CC statements for dashboard
-        self.dashboard_current_statements = self.compute_current_statements().await?;
+        self.dashboard.current_statements = self.compute_current_statements().await?;
 
         Ok(())
     }
 
     /// Build the current (open) CC statement for each credit card account.
-    /// Used by the dashboard to show a summary; runs on every `refresh_all_data`.
+    /// Used by the dashboard to show a summary; uses a single batched query.
     async fn compute_current_statements(
         &self,
     ) -> anyhow::Result<Vec<(String, CreditCardStatement)>> {
@@ -394,7 +431,17 @@ impl App {
         use chrono::Datelike;
 
         let today = Local::now().date_naive();
-        let mut results = Vec::new();
+
+        struct AccInfo {
+            name: String,
+            id: i32,
+            current_start: NaiveDate,
+            next_close: NaiveDate,
+            due: NaiveDate,
+        }
+
+        let mut acc_infos = Vec::new();
+        let mut ranges = Vec::new();
 
         for acc in &self.accounts {
             if !acc.has_credit_card {
@@ -404,7 +451,6 @@ impl App {
             let due_day = acc.due_day.unwrap_or(1) as u32;
 
             let latest_close = latest_closing_date(today, billing_day);
-
             let current_start = latest_close.succ_opt().unwrap();
             if current_start > today {
                 continue;
@@ -414,21 +460,28 @@ impl App {
             let next_close = clamped_day(next_y, next_m, billing_day);
             let due = statement_due_date(next_y, next_m, billing_day, due_day);
 
-            let (charges, credits) = transactions::sum_credit_by_account_in_range(
-                &self.pool,
-                acc.id,
+            ranges.push((acc.id, current_start, today));
+            acc_infos.push(AccInfo {
+                name: acc.name.clone(),
+                id: acc.id,
                 current_start,
-                today,
-            )
-            .await?;
+                next_close,
+                due,
+            });
+        }
 
+        let sums = transactions::sum_credit_by_accounts_batch(&self.pool, &ranges).await?;
+
+        let mut results = Vec::with_capacity(acc_infos.len());
+        for info in acc_infos {
+            let (charges, credits) = sums.get(&info.id).copied().unwrap_or_default();
             let total = charges - credits;
             results.push((
-                acc.name.clone(),
+                info.name,
                 CreditCardStatement {
-                    period_start: current_start,
-                    period_end: next_close,
-                    due_date: due,
+                    period_start: info.current_start,
+                    period_end: info.next_close,
+                    due_date: info.due,
                     total_charges: charges,
                     total_credits: credits,
                     statement_total: total,
@@ -443,24 +496,97 @@ impl App {
     }
 
     pub async fn load_transfers(&mut self) -> anyhow::Result<()> {
-        self.transfers = crate::db::transfers::list_transfers(
+        self.xfer.items = crate::db::transfers::list_transfers(
             &self.pool,
             PAGE_SIZE as i64,
-            self.transfer_offset as i64,
+            self.xfer.offset as i64,
         )
         .await?;
-        self.transfer_count = crate::db::transfers::count_transfers(&self.pool).await?;
+        self.xfer.count = crate::db::transfers::count_transfers(&self.pool).await?;
         Ok(())
     }
 
     pub async fn load_cc_payments(&mut self) -> anyhow::Result<()> {
-        self.cc_payments = crate::db::credit_card_payments::list_all_payments(
+        self.cc_pay.items = crate::db::credit_card_payments::list_all_payments(
             &self.pool,
             PAGE_SIZE as i64,
-            self.cc_payment_offset as i64,
+            self.cc_pay.offset as i64,
         )
         .await?;
-        self.cc_payment_count = crate::db::credit_card_payments::count_payments(&self.pool).await?;
+        self.cc_pay.count = crate::db::credit_card_payments::count_payments(&self.pool).await?;
+        Ok(())
+    }
+
+    // ── Targeted refresh helpers ────────────────────────────────────
+
+    pub async fn refresh_accounts(&mut self) -> anyhow::Result<()> {
+        use crate::db::accounts;
+        let (accts, names, bals) = tokio::try_join!(
+            accounts::list_accounts(&self.pool),
+            accounts::list_all_account_names(&self.pool),
+            accounts::compute_all_balances(&self.pool),
+        )?;
+        self.accounts = accts;
+        self.account_names = names;
+        self.balances = bals;
+        Ok(())
+    }
+
+    pub async fn refresh_balances(&mut self) -> anyhow::Result<()> {
+        self.balances = crate::db::accounts::compute_all_balances(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn refresh_categories(&mut self) -> anyhow::Result<()> {
+        self.categories = crate::db::categories::list_categories(&self.pool).await?;
+        self.category_names = self
+            .categories
+            .iter()
+            .map(|c| (c.id, c.name.clone()))
+            .collect();
+        Ok(())
+    }
+
+    pub async fn refresh_budgets(&mut self) -> anyhow::Result<()> {
+        use crate::db::budgets;
+        use crate::models::BudgetPeriod;
+        let today = Local::now().date_naive();
+        let (weekly_start, _) = BudgetPeriod::Weekly.date_range(today);
+        let (monthly_start, _) = BudgetPeriod::Monthly.date_range(today);
+        let (yearly_start, _) = BudgetPeriod::Yearly.date_range(today);
+        let (bl, bs) = tokio::try_join!(
+            budgets::list_budgets(&self.pool),
+            budgets::compute_all_spending(&self.pool, weekly_start, monthly_start, yearly_start, today),
+        )?;
+        self.budget.items = bl;
+        self.budget.spent = bs;
+        Ok(())
+    }
+
+    pub async fn refresh_recurring(&mut self) -> anyhow::Result<()> {
+        let today = Local::now().date_naive();
+        let (pending, list) = tokio::try_join!(
+            crate::db::recurring::list_pending(&self.pool, today),
+            crate::db::recurring::list_recurring(&self.pool),
+        )?;
+        self.recur.pending = pending;
+        self.recur.list = list;
+        Ok(())
+    }
+
+    pub async fn refresh_installments(&mut self) -> anyhow::Result<()> {
+        self.inst.items =
+            crate::db::installments::list_installment_purchases(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn refresh_notifications(&mut self) -> anyhow::Result<()> {
+        self.dashboard.notifications = crate::db::notifications::list_unread(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn refresh_dashboard_statements(&mut self) -> anyhow::Result<()> {
+        self.dashboard.current_statements = self.compute_current_statements().await?;
         Ok(())
     }
 
@@ -477,16 +603,17 @@ impl App {
         use crate::db::transactions;
 
         let params = self
-            .transaction_filter
+            .txn
+            .filter
             .to_params(&self.accounts, &self.categories);
-        self.transactions = transactions::list_filtered(
+        self.txn.items = transactions::list_filtered(
             &self.pool,
             &params,
             PAGE_SIZE as i64,
-            self.transaction_offset as i64,
+            self.txn.offset as i64,
         )
         .await?;
-        self.transaction_count = transactions::count_filtered(&self.pool, &params).await?;
+        self.txn.count = transactions::count_filtered(&self.pool, &params).await?;
         Ok(())
     }
 
@@ -639,26 +766,26 @@ impl App {
         match self.screen {
             Screen::Dashboard => None,
             Screen::Transactions => {
-                Some((&mut self.transaction_table_state, self.transactions.len()))
+                Some((&mut self.txn.table_state, self.txn.items.len()))
             }
-            Screen::Accounts => Some((&mut self.account_table_state, self.accounts.len())),
-            Screen::Budgets => Some((&mut self.budget_table_state, self.budgets.len())),
-            Screen::Categories => Some((&mut self.category_table_state, self.categories.len())),
+            Screen::Accounts => Some((&mut self.acct.table_state, self.accounts.len())),
+            Screen::Budgets => Some((&mut self.budget.table_state, self.budget.items.len())),
+            Screen::Categories => Some((&mut self.cat.table_state, self.categories.len())),
             Screen::Installments => {
-                Some((&mut self.installment_table_state, self.installments.len()))
+                Some((&mut self.inst.table_state, self.inst.items.len()))
             }
-            Screen::Recurring => Some((&mut self.recurring_table_state, self.recurring_list.len())),
-            Screen::Transfers => Some((&mut self.transfer_table_state, self.transfers.len())),
+            Screen::Recurring => Some((&mut self.recur.table_state, self.recur.list.len())),
+            Screen::Transfers => Some((&mut self.xfer.table_state, self.xfer.items.len())),
             Screen::CreditCardPayments => {
-                Some((&mut self.cc_payment_table_state, self.cc_payments.len()))
+                Some((&mut self.cc_pay.table_state, self.cc_pay.items.len()))
             }
-            Screen::CreditCardStatements => match self.cc_statement_view {
+            Screen::CreditCardStatements => match self.cc_stmt.view {
                 StatementsView::List => {
-                    Some((&mut self.cc_statement_table_state, self.cc_statements.len()))
+                    Some((&mut self.cc_stmt.table_state, self.cc_stmt.items.len()))
                 }
                 StatementsView::Detail => Some((
-                    &mut self.cc_statement_detail_table_state,
-                    self.cc_statement_detail_txns.len(),
+                    &mut self.cc_stmt.detail_table_state,
+                    self.cc_stmt.detail_txns.len(),
                 )),
             },
         }
@@ -666,8 +793,8 @@ impl App {
 
     fn jump_to_row(&mut self, row: usize) {
         if self.screen == Screen::Dashboard {
-            if !self.notifications.is_empty() {
-                self.notification_selection = row.min(self.notifications.len() - 1);
+            if !self.dashboard.notifications.is_empty() {
+                self.dashboard.notification_selection = row.min(self.dashboard.notifications.len() - 1);
             }
         } else if let Some((state, len)) = self.active_table_state()
             && len > 0
@@ -678,8 +805,8 @@ impl App {
 
     fn jump_to_last_row(&mut self) {
         if self.screen == Screen::Dashboard {
-            if !self.notifications.is_empty() {
-                self.notification_selection = self.notifications.len() - 1;
+            if !self.dashboard.notifications.is_empty() {
+                self.dashboard.notification_selection = self.dashboard.notifications.len() - 1;
             }
         } else if let Some((state, len)) = self.active_table_state()
             && len > 0
@@ -693,59 +820,59 @@ impl App {
     async fn handle_editing_key(&mut self, key: KeyEvent) -> anyhow::Result<()> {
         if key.code == KeyCode::Esc {
             // If installment form is confirming, dismiss confirmation only
-            if let Some(form) = &mut self.installment_form
+            if let Some(form) = &mut self.inst.form
                 && form.confirmation.is_some()
             {
                 form.confirmation = None;
                 return Ok(());
             }
-            self.account_form = None;
-            self.category_form = None;
-            self.transaction_form = None;
-            self.budget_form = None;
-            self.installment_form = None;
-            self.recurring_form = None;
-            self.transfer_form = None;
-            self.cc_payment_form = None;
+            self.acct.form = None;
+            self.cat.form = None;
+            self.txn.form = None;
+            self.budget.form = None;
+            self.inst.form = None;
+            self.recur.form = None;
+            self.xfer.form = None;
+            self.cc_pay.form = None;
             self.input_mode = InputMode::Normal;
             return Ok(());
         }
         if key.code == KeyCode::Enter {
-            if self.account_form.is_some() {
+            if self.acct.form.is_some() {
                 self.submit_account_form().await?;
-            } else if self.category_form.is_some() {
+            } else if self.cat.form.is_some() {
                 self.submit_category_form().await?;
-            } else if self.transaction_form.is_some() {
+            } else if self.txn.form.is_some() {
                 self.submit_transaction_form().await?;
-            } else if self.budget_form.is_some() {
+            } else if self.budget.form.is_some() {
                 self.submit_budget_form().await?;
-            } else if self.installment_form.is_some() {
+            } else if self.inst.form.is_some() {
                 self.submit_installment_form().await?;
-            } else if self.recurring_form.is_some() {
+            } else if self.recur.form.is_some() {
                 self.submit_recurring_form().await?;
-            } else if self.transfer_form.is_some() {
+            } else if self.xfer.form.is_some() {
                 self.submit_transfer_form().await?;
-            } else if self.cc_payment_form.is_some() {
+            } else if self.cc_pay.form.is_some() {
                 self.submit_cc_payment_form().await?;
             }
             return Ok(());
         }
 
-        if self.account_form.is_some() {
+        if self.acct.form.is_some() {
             self.handle_account_form_key(key.code);
-        } else if self.category_form.is_some() {
+        } else if self.cat.form.is_some() {
             self.handle_category_form_key(key.code);
-        } else if self.transaction_form.is_some() {
+        } else if self.txn.form.is_some() {
             self.handle_transaction_form_key(key.code);
-        } else if self.budget_form.is_some() {
+        } else if self.budget.form.is_some() {
             self.handle_budget_form_key(key.code);
-        } else if self.installment_form.is_some() {
+        } else if self.inst.form.is_some() {
             self.handle_installment_form_key(key.code);
-        } else if self.recurring_form.is_some() {
+        } else if self.recur.form.is_some() {
             self.handle_recurring_form_key(key.code);
-        } else if self.transfer_form.is_some() {
+        } else if self.xfer.form.is_some() {
             self.handle_transfer_form_key(key.code);
-        } else if self.cc_payment_form.is_some() {
+        } else if self.cc_pay.form.is_some() {
             self.handle_cc_payment_form_key(key.code);
         }
         Ok(())
@@ -754,40 +881,41 @@ impl App {
     // ── Dashboard key handlers ────────────────────────────────────────
 
     async fn handle_dashboard_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
-        if self.notifications.is_empty() {
+        if self.dashboard.notifications.is_empty() {
             return Ok(());
         }
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
-                if self.notification_selection > 0 {
-                    self.notification_selection -= 1;
+                if self.dashboard.notification_selection > 0 {
+                    self.dashboard.notification_selection -= 1;
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                let max = self.notifications.len().saturating_sub(1);
-                if self.notification_selection < max {
-                    self.notification_selection += 1;
+                let max = self.dashboard.notifications.len().saturating_sub(1);
+                if self.dashboard.notification_selection < max {
+                    self.dashboard.notification_selection += 1;
                 }
             }
             KeyCode::Char('r') => {
-                if let Some(n) = self.notifications.get(self.notification_selection) {
+                if let Some(n) = self.dashboard.notifications.get(self.dashboard.notification_selection) {
                     let id = n.id;
                     crate::db::notifications::mark_read(&self.pool, id).await?;
-                    self.load_data().await?;
+                    self.refresh_notifications().await?;
                     // Clamp selection after removal
-                    if !self.notifications.is_empty() {
-                        self.notification_selection = self
+                    if !self.dashboard.notifications.is_empty() {
+                        self.dashboard.notification_selection = self
+                            .dashboard
                             .notification_selection
-                            .min(self.notifications.len() - 1);
+                            .min(self.dashboard.notifications.len() - 1);
                     } else {
-                        self.notification_selection = 0;
+                        self.dashboard.notification_selection = 0;
                     }
                 }
             }
             KeyCode::Char('R') => {
                 crate::db::notifications::mark_all_read(&self.pool).await?;
-                self.load_data().await?;
-                self.notification_selection = 0;
+                self.refresh_notifications().await?;
+                self.dashboard.notification_selection = 0;
             }
             _ => {}
         }

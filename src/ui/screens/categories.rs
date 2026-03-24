@@ -91,7 +91,7 @@ impl CategoryForm {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    if app.category_form.is_some() {
+    if app.cat.form.is_some() {
         render_form(frame, area, app);
     } else {
         render_list(frame, area, app);
@@ -133,10 +133,10 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    frame.render_stateful_widget(table, table_area, &mut app.category_table_state);
+    frame.render_stateful_widget(table, table_area, &mut app.cat.table_state);
 
     let detail_content = match app
-        .category_table_state
+        .cat.table_state
         .selected()
         .and_then(|i| app.categories.get(i))
     {
@@ -167,7 +167,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
-    let form = app.category_form.as_ref().unwrap();
+    let form = app.cat.form.as_ref().unwrap();
 
     let title = match form.mode {
         CategoryFormMode::Create => "New Category",
@@ -206,28 +206,28 @@ impl App {
     pub(crate) async fn handle_categories_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
-                move_table_selection(&mut self.category_table_state, self.categories.len(), -1);
+                move_table_selection(&mut self.cat.table_state, self.categories.len(), -1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                move_table_selection(&mut self.category_table_state, self.categories.len(), 1);
+                move_table_selection(&mut self.cat.table_state, self.categories.len(), 1);
             }
             KeyCode::Char('n') => {
-                self.category_form = Some(CategoryForm::new_create());
+                self.cat.form = Some(CategoryForm::new_create());
                 self.input_mode = InputMode::Editing;
             }
             KeyCode::Char('e') => {
                 if let Some(cat) = self
-                    .category_table_state
+                    .cat.table_state
                     .selected()
                     .and_then(|i| self.categories.get(i))
                 {
-                    self.category_form = Some(CategoryForm::new_edit(cat));
+                    self.cat.form = Some(CategoryForm::new_edit(cat));
                     self.input_mode = InputMode::Editing;
                 }
             }
             KeyCode::Char('d') => {
                 if let Some(cat) = self
-                    .category_table_state
+                    .cat.table_state
                     .selected()
                     .and_then(|i| self.categories.get(i))
                 {
@@ -262,7 +262,7 @@ impl App {
     }
 
     pub(crate) fn handle_category_form_key(&mut self, code: KeyCode) {
-        let form = self.category_form.as_mut().unwrap();
+        let form = self.cat.form.as_mut().unwrap();
         match code {
             KeyCode::Tab | KeyCode::Down => {
                 if form.active_field < CategoryField::ALL.len() - 1 {
@@ -291,11 +291,11 @@ impl App {
     pub(crate) async fn submit_category_form(&mut self) -> anyhow::Result<()> {
         use crate::db::categories;
 
-        let form = self.category_form.as_ref().unwrap();
+        let form = self.cat.form.as_ref().unwrap();
         let validated = match form.validate() {
             Ok(v) => v,
             Err(e) => {
-                self.category_form.as_mut().unwrap().error = Some(e);
+                self.cat.form.as_mut().unwrap().error = Some(e);
                 return Ok(());
             }
         };
@@ -312,7 +312,7 @@ impl App {
                 && old.parsed_type() != validated.category_type
                 && categories::has_references(&self.pool, id).await?
             {
-                self.category_form.as_mut().unwrap().error = Some(
+                self.cat.form.as_mut().unwrap().error = Some(
                     "Cannot change type: category is referenced by transactions or budgets".into(),
                 );
                 return Ok(());
@@ -327,17 +327,17 @@ impl App {
             info!(name = %validated.name, "category created");
         }
 
-        self.category_form = None;
+        self.cat.form = None;
         self.input_mode = InputMode::Normal;
-        self.load_data().await?;
+        self.refresh_categories().await?;
         Ok(())
     }
 
     pub(crate) async fn execute_delete_category(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::categories::delete_category(&self.pool, id).await?;
         info!(id, "category deleted");
-        self.load_data().await?;
-        clamp_selection(&mut self.category_table_state, self.categories.len());
+        self.refresh_categories().await?;
+        clamp_selection(&mut self.cat.table_state, self.categories.len());
         Ok(())
     }
 }

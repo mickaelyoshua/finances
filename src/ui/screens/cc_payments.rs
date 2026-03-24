@@ -100,7 +100,7 @@ impl CcPaymentForm {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    if app.cc_payment_form.is_some() {
+    if app.cc_pay.form.is_some() {
         render_form(frame, area, app);
     } else {
         render_list(frame, area, app);
@@ -115,7 +115,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
-        .cc_payments
+        .cc_pay.items
         .iter()
         .map(|p| {
             Row::new([
@@ -140,12 +140,12 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title(if app.cc_payment_count > 0 {
-                let start = app.cc_payment_offset + 1;
-                let end = app.cc_payment_offset + app.cc_payments.len() as u64;
+            .title(if app.cc_pay.count > 0 {
+                let start = app.cc_pay.offset + 1;
+                let end = app.cc_pay.offset + app.cc_pay.items.len() as u64;
                 format!(
                     "Credit Card Payments ({start}-{end} of {})",
-                    app.cc_payment_count
+                    app.cc_pay.count
                 )
             } else {
                 "Credit Card Payments (0)".to_string()
@@ -157,12 +157,12 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    frame.render_stateful_widget(table, table_area, &mut app.cc_payment_table_state);
+    frame.render_stateful_widget(table, table_area, &mut app.cc_pay.table_state);
 
     let detail_content = match app
-        .cc_payment_table_state
+        .cc_pay.table_state
         .selected()
-        .and_then(|i| app.cc_payments.get(i))
+        .and_then(|i| app.cc_pay.items.get(i))
     {
         Some(p) => {
             vec![
@@ -193,7 +193,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
-    let form = app.cc_payment_form.as_ref().unwrap();
+    let form = app.cc_pay.form.as_ref().unwrap();
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -236,10 +236,10 @@ impl App {
     pub(crate) async fn handle_cc_payments_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
-                move_table_selection(&mut self.cc_payment_table_state, self.cc_payments.len(), -1);
+                move_table_selection(&mut self.cc_pay.table_state, self.cc_pay.items.len(), -1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                move_table_selection(&mut self.cc_payment_table_state, self.cc_payments.len(), 1);
+                move_table_selection(&mut self.cc_pay.table_state, self.cc_pay.items.len(), 1);
             }
             KeyCode::Char('n') => {
                 let has_cc = self.accounts.iter().any(|a| a.has_credit_card);
@@ -248,15 +248,15 @@ impl App {
                         "No account with credit card available",
                     ));
                 } else {
-                    self.cc_payment_form = Some(CcPaymentForm::new_create());
+                    self.cc_pay.form = Some(CcPaymentForm::new_create());
                     self.input_mode = InputMode::Editing;
                 }
             }
             KeyCode::Char('d') => {
                 if let Some(p) = self
-                    .cc_payment_table_state
+                    .cc_pay.table_state
                     .selected()
-                    .and_then(|i| self.cc_payments.get(i))
+                    .and_then(|i| self.cc_pay.items.get(i))
                 {
                     let p_id = p.id;
                     let p_desc = p.description.clone();
@@ -292,18 +292,18 @@ impl App {
                 }
             }
             KeyCode::PageUp => {
-                if self.cc_payment_offset > 0 {
-                    self.cc_payment_offset = self.cc_payment_offset.saturating_sub(PAGE_SIZE);
+                if self.cc_pay.offset > 0 {
+                    self.cc_pay.offset = self.cc_pay.offset.saturating_sub(PAGE_SIZE);
                     self.load_cc_payments().await?;
-                    self.cc_payment_table_state.select(Some(0));
+                    self.cc_pay.table_state.select(Some(0));
                 }
             }
             KeyCode::PageDown => {
-                let next = self.cc_payment_offset + PAGE_SIZE;
-                if next < self.cc_payment_count {
-                    self.cc_payment_offset = next;
+                let next = self.cc_pay.offset + PAGE_SIZE;
+                if next < self.cc_pay.count {
+                    self.cc_pay.offset = next;
                     self.load_cc_payments().await?;
-                    self.cc_payment_table_state.select(Some(0));
+                    self.cc_pay.table_state.select(Some(0));
                 }
             }
             _ => {}
@@ -312,7 +312,7 @@ impl App {
     }
 
     pub(crate) fn handle_cc_payment_form_key(&mut self, code: KeyCode) {
-        let form = self.cc_payment_form.as_mut().unwrap();
+        let form = self.cc_pay.form.as_mut().unwrap();
         match code {
             KeyCode::Tab | KeyCode::Down => {
                 if form.active_field < CcPaymentField::ALL.len() - 1 {
@@ -341,11 +341,11 @@ impl App {
     pub(crate) async fn submit_cc_payment_form(&mut self) -> anyhow::Result<()> {
         use crate::db::credit_card_payments;
 
-        let form = self.cc_payment_form.as_ref().unwrap();
+        let form = self.cc_pay.form.as_ref().unwrap();
         let validated = match form.validate(&self.accounts) {
             Ok(v) => v,
             Err(e) => {
-                self.cc_payment_form.as_mut().unwrap().error = Some(e);
+                self.cc_pay.form.as_mut().unwrap().error = Some(e);
                 return Ok(());
             }
         };
@@ -364,20 +364,21 @@ impl App {
             "credit card payment created"
         );
 
-        self.cc_payment_form = None;
+        self.cc_pay.form = None;
         self.input_mode = InputMode::Normal;
-        self.load_data().await?;
-        if self.screen == crate::ui::app::Screen::CreditCardStatements {
-            self.load_cc_statements().await?;
-        }
+        self.load_cc_payments().await?;
+        self.refresh_balances().await?;
+        self.refresh_dashboard_statements().await?;
         Ok(())
     }
 
     pub(crate) async fn execute_delete_cc_payment(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::credit_card_payments::delete_payment(&self.pool, id).await?;
         info!(id, "credit card payment deleted");
-        self.load_data().await?;
-        clamp_selection(&mut self.cc_payment_table_state, self.cc_payments.len());
+        self.load_cc_payments().await?;
+        self.refresh_balances().await?;
+        self.refresh_dashboard_statements().await?;
+        clamp_selection(&mut self.cc_pay.table_state, self.cc_pay.items.len());
         Ok(())
     }
 }

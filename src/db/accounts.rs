@@ -113,24 +113,46 @@ pub async fn compute_credit_used(pool: &PgPool, account_id: i32) -> Result<Decim
 }
 
 /// Compute checking balance and credit used for all active accounts in a single query.
+///
+/// Uses LEFT JOINs with pre-aggregated subqueries instead of correlated subqueries,
+/// so the planner scans each table once rather than once per account.
 pub async fn compute_all_balances(
     pool: &PgPool,
 ) -> Result<HashMap<i32, (Decimal, Decimal)>, sqlx::Error> {
     let rows: Vec<(i32, Decimal, Decimal)> = sqlx::query_as(
         "SELECT
             a.id,
-            COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND transaction_type = 'income' AND payment_method != 'credit'), 0)
-            - COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND transaction_type = 'expense' AND payment_method != 'credit'), 0)
-            + COALESCE((SELECT SUM(amount) FROM transfers WHERE to_account_id = a.id), 0)
-            - COALESCE((SELECT SUM(amount) FROM transfers WHERE from_account_id = a.id), 0)
-            - COALESCE((SELECT SUM(amount) FROM credit_card_payments WHERE account_id = a.id), 0),
+            -- Checking balance: non-credit income - non-credit expense + transfers_in - transfers_out - cc_payments
+            COALESCE(t.non_credit_income, 0) - COALESCE(t.non_credit_expense, 0)
+                + COALESCE(tr_in.total, 0) - COALESCE(tr_out.total, 0)
+                - COALESCE(ccp.total, 0),
+            -- Credit used: credit expenses - credit income - cc_payments (only if has_credit_card)
             CASE WHEN a.has_credit_card THEN
-                COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND payment_method = 'credit' AND transaction_type = 'expense'), 0)
-                - COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND payment_method = 'credit' AND transaction_type = 'income'), 0)
-                - COALESCE((SELECT SUM(amount) FROM credit_card_payments WHERE account_id = a.id), 0)
+                COALESCE(t.credit_expense, 0) - COALESCE(t.credit_income, 0) - COALESCE(ccp.total, 0)
             ELSE 0
             END
         FROM accounts a
+        LEFT JOIN (
+            SELECT account_id,
+                SUM(amount) FILTER (WHERE transaction_type = 'income'  AND payment_method != 'credit') AS non_credit_income,
+                SUM(amount) FILTER (WHERE transaction_type = 'expense' AND payment_method != 'credit') AS non_credit_expense,
+                SUM(amount) FILTER (WHERE transaction_type = 'expense' AND payment_method  = 'credit') AS credit_expense,
+                SUM(amount) FILTER (WHERE transaction_type = 'income'  AND payment_method  = 'credit') AS credit_income
+            FROM transactions
+            GROUP BY account_id
+        ) t ON t.account_id = a.id
+        LEFT JOIN (
+            SELECT to_account_id AS account_id, SUM(amount) AS total
+            FROM transfers GROUP BY to_account_id
+        ) tr_in ON tr_in.account_id = a.id
+        LEFT JOIN (
+            SELECT from_account_id AS account_id, SUM(amount) AS total
+            FROM transfers GROUP BY from_account_id
+        ) tr_out ON tr_out.account_id = a.id
+        LEFT JOIN (
+            SELECT account_id, SUM(amount) AS total
+            FROM credit_card_payments GROUP BY account_id
+        ) ccp ON ccp.account_id = a.id
         WHERE a.active = TRUE
         ORDER BY a.id",
     )

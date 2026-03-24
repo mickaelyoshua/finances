@@ -218,7 +218,7 @@ impl RecurringForm {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    if app.recurring_form.is_some() {
+    if app.recur.form.is_some() {
         render_form(frame, area, app);
     } else {
         render_list(frame, area, app);
@@ -242,7 +242,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
-        .recurring_list
+        .recur.list
         .iter()
         .map(|r| {
             let account_name = app.account_name(r.account_id);
@@ -289,12 +289,12 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    frame.render_stateful_widget(table, table_area, &mut app.recurring_table_state);
+    frame.render_stateful_widget(table, table_area, &mut app.recur.table_state);
 
     let detail_content = match app
-        .recurring_table_state
+        .recur.table_state
         .selected()
-        .and_then(|i| app.recurring_list.get(i))
+        .and_then(|i| app.recur.list.get(i))
     {
         Some(r) => {
             let account_name = app.account_name(r.account_id);
@@ -341,7 +341,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
-    let form = app.recurring_form.as_ref().unwrap();
+    let form = app.recur.form.as_ref().unwrap();
 
     let title = match form.mode {
         RecurringFormMode::Create => "New Recurring Transaction",
@@ -413,15 +413,15 @@ impl App {
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
                 move_table_selection(
-                    &mut self.recurring_table_state,
-                    self.recurring_list.len(),
+                    &mut self.recur.table_state,
+                    self.recur.list.len(),
                     -1,
                 );
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 move_table_selection(
-                    &mut self.recurring_table_state,
-                    self.recurring_list.len(),
+                    &mut self.recur.table_state,
+                    self.recur.list.len(),
                     1,
                 );
             }
@@ -431,18 +431,18 @@ impl App {
                 } else if self.categories.is_empty() {
                     self.status_message = Some(StatusMessage::error("Create a category first"));
                 } else {
-                    self.recurring_form = Some(RecurringForm::new_create());
+                    self.recur.form = Some(RecurringForm::new_create());
                     self.input_mode = InputMode::Editing;
                 }
             }
             KeyCode::Char('e') => {
                 if let Some(r) = self
-                    .recurring_table_state
+                    .recur.table_state
                     .selected()
-                    .and_then(|i| self.recurring_list.get(i))
+                    .and_then(|i| self.recur.list.get(i))
                 {
                     let r = r.clone();
-                    self.recurring_form = Some(RecurringForm::new_edit(
+                    self.recur.form = Some(RecurringForm::new_edit(
                         &r,
                         &self.accounts,
                         &self.categories,
@@ -452,9 +452,9 @@ impl App {
             }
             KeyCode::Char('d') => {
                 if let Some(r) = self
-                    .recurring_table_state
+                    .recur.table_state
                     .selected()
-                    .and_then(|i| self.recurring_list.get(i))
+                    .and_then(|i| self.recur.list.get(i))
                 {
                     let r_id = r.id;
                     let r_desc = r.description.clone();
@@ -470,7 +470,7 @@ impl App {
                 let acct_names = &self.account_names;
                 let cats = &self.categories;
                 match crate::export::export_recurring(
-                    &self.recurring_list,
+                    &self.recur.list,
                     |id| acct_names.get(&id).cloned().unwrap_or_else(|| "?".into()),
                     |id| {
                         cats.iter()
@@ -482,7 +482,7 @@ impl App {
                     Ok(path) => {
                         self.status_message = Some(StatusMessage::info(format!(
                             "Exported {} recurring transactions to {}",
-                            self.recurring_list.len(),
+                            self.recur.list.len(),
                             path.display()
                         )));
                     }
@@ -498,7 +498,7 @@ impl App {
     }
 
     pub(crate) fn handle_recurring_form_key(&mut self, code: KeyCode) {
-        let form = self.recurring_form.as_mut().unwrap();
+        let form = self.recur.form.as_mut().unwrap();
         match code {
             KeyCode::Tab | KeyCode::Down => {
                 if form.active_field < RecurringField::ALL.len() - 1 {
@@ -561,11 +561,11 @@ impl App {
     pub(crate) async fn submit_recurring_form(&mut self) -> anyhow::Result<()> {
         use crate::db::recurring;
 
-        let form = self.recurring_form.as_ref().unwrap();
+        let form = self.recur.form.as_ref().unwrap();
         let validated = match form.validate(&self.accounts, &self.categories) {
             Ok(v) => v,
             Err(e) => {
-                self.recurring_form.as_mut().unwrap().error = Some(e);
+                self.recur.form.as_mut().unwrap().error = Some(e);
                 return Ok(());
             }
         };
@@ -592,9 +592,9 @@ impl App {
             }
         }
 
-        self.recurring_form = None;
+        self.recur.form = None;
         self.input_mode = InputMode::Normal;
-        self.load_data().await?;
+        self.refresh_recurring().await?;
         Ok(())
     }
 
@@ -604,9 +604,9 @@ impl App {
         let today = Local::now().date_naive();
 
         let r = match self
-            .recurring_table_state
+            .recur.table_state
             .selected()
-            .and_then(|i| self.recurring_list.get(i))
+            .and_then(|i| self.recur.list.get(i))
         {
             Some(r) => r.clone(),
             None => return Ok(()),
@@ -653,7 +653,10 @@ impl App {
             "recurring transaction confirmed"
         );
 
-        self.load_data().await?;
+        self.refresh_recurring().await?;
+        self.load_transactions().await?;
+        self.refresh_balances().await?;
+        self.refresh_budgets().await?;
         self.status_message = Some(StatusMessage::info(format!(
             "Confirmed \"{}\" — next due: {}",
             r.description,
@@ -665,8 +668,8 @@ impl App {
     pub(crate) async fn execute_deactivate_recurring(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::recurring::deactivate_recurring(&self.pool, id).await?;
         info!(id, "recurring transaction deactivated");
-        self.load_data().await?;
-        clamp_selection(&mut self.recurring_table_state, self.recurring_list.len());
+        self.refresh_recurring().await?;
+        clamp_selection(&mut self.recur.table_state, self.recur.list.len());
         Ok(())
     }
 }

@@ -327,7 +327,7 @@ impl TransactionForm {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    if app.transaction_form.is_some() {
+    if app.txn.form.is_some() {
         render_form(frame, area, app);
     } else {
         render_list(frame, area, app);
@@ -335,7 +335,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
-    let filter_height = if app.transaction_filter.visible { 4 } else { 0 };
+    let filter_height = if app.txn.filter.visible { 4 } else { 0 };
 
     let [filter_area, table_area, detail_area] = Layout::vertical([
         Constraint::Length(filter_height),
@@ -344,7 +344,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     ])
     .areas(area);
 
-    if app.transaction_filter.visible {
+    if app.txn.filter.visible {
         render_filter_bar(frame, filter_area, app);
     }
 
@@ -352,7 +352,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
-        .transactions
+        .txn.items
         .iter()
         .map(|txn| {
             let account_name = app.account_name(txn.account_id);
@@ -388,10 +388,10 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title(if app.transaction_count > 0 {
-                let start = app.transaction_offset + 1;
-                let end = app.transaction_offset + app.transactions.len() as u64;
-                format!("Transactions ({start}-{end} of {})", app.transaction_count)
+            .title(if app.txn.count > 0 {
+                let start = app.txn.offset + 1;
+                let end = app.txn.offset + app.txn.items.len() as u64;
+                format!("Transactions ({start}-{end} of {})", app.txn.count)
             } else {
                 "Transactions (0)".to_string()
             }),
@@ -402,12 +402,12 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    frame.render_stateful_widget(table, table_area, &mut app.transaction_table_state);
+    frame.render_stateful_widget(table, table_area, &mut app.txn.table_state);
 
     let detail_content = match app
-        .transaction_table_state
+        .txn.table_state
         .selected()
-        .and_then(|i| app.transactions.get(i))
+        .and_then(|i| app.txn.items.get(i))
     {
         Some(txn) => {
             let account_name = app.account_name(txn.account_id);
@@ -452,7 +452,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_filter_bar(frame: &mut Frame, area: Rect, app: &mut App) {
-    let filter = &app.transaction_filter;
+    let filter = &app.txn.filter;
     let is_filtering = app.input_mode == InputMode::Filtering;
     let border_color = if is_filtering {
         Color::Yellow
@@ -568,7 +568,7 @@ fn render_filter_bar(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
-    let form = app.transaction_form.as_ref().unwrap();
+    let form = app.txn.form.as_ref().unwrap();
 
     let title = match form.mode {
         TransactionFormMode::Create => "New Transaction",
@@ -636,15 +636,15 @@ impl App {
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
                 move_table_selection(
-                    &mut self.transaction_table_state,
-                    self.transactions.len(),
+                    &mut self.txn.table_state,
+                    self.txn.items.len(),
                     -1,
                 );
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 move_table_selection(
-                    &mut self.transaction_table_state,
-                    self.transactions.len(),
+                    &mut self.txn.table_state,
+                    self.txn.items.len(),
                     1,
                 );
             }
@@ -654,15 +654,15 @@ impl App {
                 } else if self.categories.is_empty() {
                     self.status_message = Some(StatusMessage::error("Create a category first"));
                 } else {
-                    self.transaction_form = Some(TransactionForm::new_create());
+                    self.txn.form = Some(TransactionForm::new_create());
                     self.input_mode = InputMode::Editing;
                 }
             }
             KeyCode::Char('e') => {
                 if let Some(txn) = self
-                    .transaction_table_state
+                    .txn.table_state
                     .selected()
-                    .and_then(|i| self.transactions.get(i))
+                    .and_then(|i| self.txn.items.get(i))
                 {
                     if txn.installment_purchase_id.is_some() {
                         self.status_message = Some(StatusMessage::error(
@@ -670,7 +670,7 @@ impl App {
                         ));
                     } else {
                         let txn = txn.clone();
-                        self.transaction_form = Some(TransactionForm::new_edit(
+                        self.txn.form = Some(TransactionForm::new_edit(
                             &txn,
                             &self.accounts,
                             &self.categories,
@@ -681,9 +681,9 @@ impl App {
             }
             KeyCode::Char('d') => {
                 if let Some(txn) = self
-                    .transaction_table_state
+                    .txn.table_state
                     .selected()
-                    .and_then(|i| self.transactions.get(i))
+                    .and_then(|i| self.txn.items.get(i))
                 {
                     if txn.installment_purchase_id.is_some() {
                         self.status_message = Some(StatusMessage::error(
@@ -700,19 +700,19 @@ impl App {
                 }
             }
             KeyCode::Char('f') => {
-                self.transaction_filter.visible = true;
-                self.transaction_filter.active_field = 0;
+                self.txn.filter.visible = true;
+                self.txn.filter.active_field = 0;
                 self.input_mode = InputMode::Filtering;
             }
             KeyCode::Char('r') => {
-                self.transaction_filter = TransactionFilter::new();
-                self.transaction_offset = 0;
+                self.txn.filter = TransactionFilter::new();
+                self.txn.offset = 0;
                 self.load_transactions().await?;
-                self.transaction_table_state.select(Some(0));
+                self.txn.table_state.select(Some(0));
             }
             KeyCode::Char('x') => {
                 let params = self
-                    .transaction_filter
+                    .txn.filter
                     .to_params(&self.accounts, &self.categories);
                 match crate::db::transactions::list_all_filtered(&self.pool, &params).await {
                     Ok(all_txns) => {
@@ -748,18 +748,18 @@ impl App {
                 }
             }
             KeyCode::PageUp => {
-                if self.transaction_offset > 0 {
-                    self.transaction_offset = self.transaction_offset.saturating_sub(PAGE_SIZE);
+                if self.txn.offset > 0 {
+                    self.txn.offset = self.txn.offset.saturating_sub(PAGE_SIZE);
                     self.load_transactions().await?;
-                    self.transaction_table_state.select(Some(0));
+                    self.txn.table_state.select(Some(0));
                 }
             }
             KeyCode::PageDown => {
-                let next = self.transaction_offset + PAGE_SIZE;
-                if next < self.transaction_count {
-                    self.transaction_offset = next;
+                let next = self.txn.offset + PAGE_SIZE;
+                if next < self.txn.count {
+                    self.txn.offset = next;
                     self.load_transactions().await?;
-                    self.transaction_table_state.select(Some(0));
+                    self.txn.table_state.select(Some(0));
                 }
             }
             _ => {}
@@ -776,56 +776,56 @@ impl App {
                 self.input_mode = InputMode::Normal;
             }
             KeyCode::Enter => {
-                self.transaction_offset = 0;
+                self.txn.offset = 0;
                 self.load_transactions().await?;
-                self.transaction_table_state.select(Some(0));
+                self.txn.table_state.select(Some(0));
                 self.input_mode = InputMode::Normal;
-                debug!(count = self.transaction_count, "filters applied");
+                debug!(count = self.txn.count, "filters applied");
             }
             KeyCode::Tab | KeyCode::Down => {
-                if self.transaction_filter.active_field < FilterField::ALL.len() - 1 {
-                    self.transaction_filter.active_field += 1;
+                if self.txn.filter.active_field < FilterField::ALL.len() - 1 {
+                    self.txn.filter.active_field += 1;
                 }
             }
             KeyCode::BackTab | KeyCode::Up => {
-                if self.transaction_filter.active_field > 0 {
-                    self.transaction_filter.active_field -= 1;
+                if self.txn.filter.active_field > 0 {
+                    self.txn.filter.active_field -= 1;
                 }
             }
-            _ => match self.transaction_filter.active_field_id() {
+            _ => match self.txn.filter.active_field_id() {
                 FilterField::DateFrom => {
-                    self.transaction_filter.date_from.handle_key(key.code);
+                    self.txn.filter.date_from.handle_key(key.code);
                 }
                 FilterField::DateTo => {
-                    self.transaction_filter.date_to.handle_key(key.code);
+                    self.txn.filter.date_to.handle_key(key.code);
                 }
                 FilterField::Description => {
-                    self.transaction_filter.description.handle_key(key.code);
+                    self.txn.filter.description.handle_key(key.code);
                 }
                 FilterField::Account => {
                     if is_toggle_key(key.code) {
                         let len = self.accounts.len();
-                        self.transaction_filter.account_idx =
-                            cycle_option(self.transaction_filter.account_idx, len, key.code);
+                        self.txn.filter.account_idx =
+                            cycle_option(self.txn.filter.account_idx, len, key.code);
                     }
                 }
                 FilterField::Category => {
                     if is_toggle_key(key.code) {
                         let len = self.categories.len();
-                        self.transaction_filter.category_idx =
-                            cycle_option(self.transaction_filter.category_idx, len, key.code);
+                        self.txn.filter.category_idx =
+                            cycle_option(self.txn.filter.category_idx, len, key.code);
                     }
                 }
                 FilterField::TransactionType => {
                     if is_toggle_key(key.code) {
-                        self.transaction_filter.transaction_type_idx =
-                            cycle_option(self.transaction_filter.transaction_type_idx, 2, key.code);
+                        self.txn.filter.transaction_type_idx =
+                            cycle_option(self.txn.filter.transaction_type_idx, 2, key.code);
                     }
                 }
                 FilterField::PaymentMethod => {
                     if is_toggle_key(key.code) {
-                        self.transaction_filter.payment_method_idx =
-                            cycle_option(self.transaction_filter.payment_method_idx, 6, key.code);
+                        self.txn.filter.payment_method_idx =
+                            cycle_option(self.txn.filter.payment_method_idx, 6, key.code);
                     }
                 }
             },
@@ -834,7 +834,7 @@ impl App {
     }
 
     pub(crate) fn handle_transaction_form_key(&mut self, code: KeyCode) {
-        let form = self.transaction_form.as_mut().unwrap();
+        let form = self.txn.form.as_mut().unwrap();
         match code {
             KeyCode::Tab | KeyCode::Down => {
                 if form.active_field < TransactionField::ALL.len() - 1 {
@@ -892,11 +892,11 @@ impl App {
     pub(crate) async fn submit_transaction_form(&mut self) -> anyhow::Result<()> {
         use crate::db::transactions;
 
-        let form = self.transaction_form.as_ref().unwrap();
+        let form = self.txn.form.as_ref().unwrap();
         let validated = match form.validate(&self.accounts, &self.categories) {
             Ok(v) => v,
             Err(e) => {
-                self.transaction_form.as_mut().unwrap().error = Some(e);
+                self.txn.form.as_mut().unwrap().error = Some(e);
                 return Ok(());
             }
         };
@@ -926,17 +926,23 @@ impl App {
             }
         }
 
-        self.transaction_form = None;
+        self.txn.form = None;
         self.input_mode = InputMode::Normal;
-        self.load_data().await?;
+        self.load_transactions().await?;
+        self.refresh_balances().await?;
+        self.refresh_budgets().await?;
+        self.refresh_dashboard_statements().await?;
         Ok(())
     }
 
     pub(crate) async fn execute_delete_transaction(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::transactions::delete_transaction(&self.pool, id).await?;
         info!(id, "transaction deleted");
-        self.load_data().await?;
-        clamp_selection(&mut self.transaction_table_state, self.transactions.len());
+        self.load_transactions().await?;
+        self.refresh_balances().await?;
+        self.refresh_budgets().await?;
+        self.refresh_dashboard_statements().await?;
+        clamp_selection(&mut self.txn.table_state, self.txn.items.len());
         Ok(())
     }
 }

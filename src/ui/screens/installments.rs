@@ -198,7 +198,7 @@ impl InstallmentForm {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    if let Some(form) = &app.installment_form {
+    if let Some(form) = &app.inst.form {
         if form.confirmation.is_some() {
             render_confirmation(frame, area, app);
         } else {
@@ -224,7 +224,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
-        .installments
+        .inst.items
         .iter()
         .map(|ip| {
             let account_name = app.account_name(ip.account_id);
@@ -264,12 +264,12 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    frame.render_stateful_widget(table, table_area, &mut app.installment_table_state);
+    frame.render_stateful_widget(table, table_area, &mut app.inst.table_state);
 
     let detail_content = match app
-        .installment_table_state
+        .inst.table_state
         .selected()
-        .and_then(|i| app.installments.get(i))
+        .and_then(|i| app.inst.items.get(i))
     {
         Some(ip) => {
             let account_name = app.account_name(ip.account_id);
@@ -310,7 +310,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
-    let form = app.installment_form.as_ref().unwrap();
+    let form = app.inst.form.as_ref().unwrap();
 
     let title = match form.mode {
         InstallmentFormMode::Create => "New Installment Purchase",
@@ -378,7 +378,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_confirmation(frame: &mut Frame, area: Rect, app: &mut App) {
-    let form = app.installment_form.as_ref().unwrap();
+    let form = app.inst.form.as_ref().unwrap();
     let conf = form.confirmation.as_ref().unwrap();
 
     let mut lines: Vec<Line> = Vec::new();
@@ -454,15 +454,15 @@ impl App {
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
                 move_table_selection(
-                    &mut self.installment_table_state,
-                    self.installments.len(),
+                    &mut self.inst.table_state,
+                    self.inst.items.len(),
                     -1,
                 );
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 move_table_selection(
-                    &mut self.installment_table_state,
-                    self.installments.len(),
+                    &mut self.inst.table_state,
+                    self.inst.items.len(),
                     1,
                 );
             }
@@ -480,7 +480,7 @@ impl App {
                     self.status_message =
                         Some(StatusMessage::error("Create an expense category first"));
                 } else {
-                    self.installment_form = Some(InstallmentForm::new_create());
+                    self.inst.form = Some(InstallmentForm::new_create());
                     self.input_mode = InputMode::Editing;
                 }
             }
@@ -498,12 +498,12 @@ impl App {
                     self.status_message =
                         Some(StatusMessage::error("Create an expense category first"));
                 } else if let Some(ip) = self
-                    .installment_table_state
+                    .inst.table_state
                     .selected()
-                    .and_then(|i| self.installments.get(i))
+                    .and_then(|i| self.inst.items.get(i))
                 {
                     let ip = ip.clone();
-                    self.installment_form = Some(InstallmentForm::new_edit(
+                    self.inst.form = Some(InstallmentForm::new_edit(
                         &ip,
                         &self.accounts,
                         &self.categories,
@@ -513,9 +513,9 @@ impl App {
             }
             KeyCode::Char('d') => {
                 if let Some(ip) = self
-                    .installment_table_state
+                    .inst.table_state
                     .selected()
-                    .and_then(|i| self.installments.get(i))
+                    .and_then(|i| self.inst.items.get(i))
                 {
                     let ip_id = ip.id;
                     let ip_desc = ip.description.clone();
@@ -530,7 +530,7 @@ impl App {
                 let acct_names = &self.account_names;
                 let cats = &self.categories;
                 match crate::export::export_installments(
-                    &self.installments,
+                    &self.inst.items,
                     |id| acct_names.get(&id).cloned().unwrap_or_else(|| "?".into()),
                     |id| {
                         cats.iter()
@@ -542,7 +542,7 @@ impl App {
                     Ok(path) => {
                         self.status_message = Some(StatusMessage::info(format!(
                             "Exported {} installments to {}",
-                            self.installments.len(),
+                            self.inst.items.len(),
                             path.display()
                         )));
                     }
@@ -558,7 +558,7 @@ impl App {
     }
 
     pub(crate) fn handle_installment_form_key(&mut self, code: KeyCode) {
-        let form = self.installment_form.as_mut().unwrap();
+        let form = self.inst.form.as_mut().unwrap();
 
         // If confirming, only handle Left/Right toggle
         if let Some(conf) = &mut form.confirmation {
@@ -608,9 +608,9 @@ impl App {
     /// screen with per-parcela due dates; second call (when user picks Yes)
     /// executes the create/update. Picking No returns to the form.
     pub(crate) async fn submit_installment_form(&mut self) -> anyhow::Result<()> {
-        if self.installment_form.as_ref().unwrap().confirmation.is_some() {
+        if self.inst.form.as_ref().unwrap().confirmation.is_some() {
             let confirmed = self
-                .installment_form
+                .inst.form
                 .as_ref()
                 .unwrap()
                 .confirmation
@@ -620,14 +620,14 @@ impl App {
 
             if confirmed {
                 let validated = self
-                    .installment_form
+                    .inst.form
                     .as_mut()
                     .unwrap()
                     .confirmation
                     .take()
                     .unwrap()
                     .validated;
-                let mode = self.installment_form.as_ref().unwrap().mode;
+                let mode = self.inst.form.as_ref().unwrap().mode;
 
                 match mode {
                     InstallmentFormMode::Create => {
@@ -669,22 +669,26 @@ impl App {
                     }
                 }
 
-                self.installment_form = None;
+                self.inst.form = None;
                 self.input_mode = InputMode::Normal;
-                self.load_data().await?;
+                self.refresh_installments().await?;
+                self.load_transactions().await?;
+                self.refresh_balances().await?;
+                self.refresh_budgets().await?;
+                self.refresh_dashboard_statements().await?;
             } else {
                 // No selected — return to editing
-                self.installment_form.as_mut().unwrap().confirmation = None;
+                self.inst.form.as_mut().unwrap().confirmation = None;
             }
             return Ok(());
         }
 
         // Validate and show confirmation
-        let form = self.installment_form.as_ref().unwrap();
+        let form = self.inst.form.as_ref().unwrap();
         let validated = match form.validate(&self.accounts, &self.categories) {
             Ok(v) => v,
             Err(e) => {
-                self.installment_form.as_mut().unwrap().error = Some(e);
+                self.inst.form.as_mut().unwrap().error = Some(e);
                 return Ok(());
             }
         };
@@ -723,7 +727,7 @@ impl App {
             parcela_dues.push((i, due));
         }
 
-        self.installment_form.as_mut().unwrap().confirmation = Some(InstallmentConfirmation {
+        self.inst.form.as_mut().unwrap().confirmation = Some(InstallmentConfirmation {
             validated,
             per_installment,
             parcela_dues,
@@ -736,8 +740,12 @@ impl App {
     pub(crate) async fn execute_delete_installment(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::installments::delete_installment_purchase(&self.pool, id).await?;
         info!(id, "installment purchase deleted (transactions cascaded)");
-        self.load_data().await?;
-        clamp_selection(&mut self.installment_table_state, self.installments.len());
+        self.refresh_installments().await?;
+        self.load_transactions().await?;
+        self.refresh_balances().await?;
+        self.refresh_budgets().await?;
+        self.refresh_dashboard_statements().await?;
+        clamp_selection(&mut self.inst.table_state, self.inst.items.len());
         Ok(())
     }
 }

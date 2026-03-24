@@ -166,7 +166,7 @@ impl AccountForm {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    if app.account_form.is_some() {
+    if app.acct.form.is_some() {
         render_form(frame, area, app);
     } else {
         render_list(frame, area, app);
@@ -234,10 +234,10 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    frame.render_stateful_widget(table, table_area, &mut app.account_table_state);
+    frame.render_stateful_widget(table, table_area, &mut app.acct.table_state);
 
     let detail_content = match app
-        .account_table_state
+        .acct.table_state
         .selected()
         .and_then(|i| app.accounts.get(i))
     {
@@ -290,28 +290,28 @@ impl App {
     pub(crate) async fn handle_accounts_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
-                move_table_selection(&mut self.account_table_state, self.accounts.len(), -1);
+                move_table_selection(&mut self.acct.table_state, self.accounts.len(), -1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                move_table_selection(&mut self.account_table_state, self.accounts.len(), 1);
+                move_table_selection(&mut self.acct.table_state, self.accounts.len(), 1);
             }
             KeyCode::Char('n') => {
-                self.account_form = Some(AccountForm::new_create());
+                self.acct.form = Some(AccountForm::new_create());
                 self.input_mode = InputMode::Editing;
             }
             KeyCode::Char('e') => {
                 if let Some(acc) = self
-                    .account_table_state
+                    .acct.table_state
                     .selected()
                     .and_then(|i| self.accounts.get(i))
                 {
-                    self.account_form = Some(AccountForm::new_edit(acc));
+                    self.acct.form = Some(AccountForm::new_edit(acc));
                     self.input_mode = InputMode::Editing;
                 }
             }
             KeyCode::Char('d') => {
                 if let Some(acc) = self
-                    .account_table_state
+                    .acct.table_state
                     .selected()
                     .and_then(|i| self.accounts.get(i))
                 {
@@ -348,7 +348,7 @@ impl App {
     }
 
     pub(crate) fn handle_account_form_key(&mut self, code: KeyCode) {
-        let form = self.account_form.as_mut().unwrap();
+        let form = self.acct.form.as_mut().unwrap();
         match code {
             KeyCode::Tab | KeyCode::Down => {
                 let max = form.visible_fields().len() - 1;
@@ -399,11 +399,11 @@ impl App {
     pub(crate) async fn submit_account_form(&mut self) -> anyhow::Result<()> {
         use crate::db::accounts;
 
-        let form = self.account_form.as_ref().unwrap();
+        let form = self.acct.form.as_ref().unwrap();
         let validated = match form.validate() {
             Ok(v) => v,
             Err(e) => {
-                self.account_form.as_mut().unwrap().error = Some(e);
+                self.acct.form.as_mut().unwrap().error = Some(e);
                 return Ok(());
             }
         };
@@ -425,18 +425,18 @@ impl App {
                     let used = accounts::used_payment_methods(&self.pool, id).await?;
 
                     if type_changed && !used.is_empty() {
-                        self.account_form.as_mut().unwrap().error =
+                        self.acct.form.as_mut().unwrap().error =
                             Some("Cannot change account type: account has transactions".into());
                         return Ok(());
                     }
                     if credit_removed && used.iter().any(|m| m == "credit") {
-                        self.account_form.as_mut().unwrap().error = Some(
+                        self.acct.form.as_mut().unwrap().error = Some(
                             "Cannot disable credit card: account has credit transactions".into(),
                         );
                         return Ok(());
                     }
                     if debit_removed && used.iter().any(|m| m == "debit") {
-                        self.account_form.as_mut().unwrap().error = Some(
+                        self.acct.form.as_mut().unwrap().error = Some(
                             "Cannot disable debit card: account has debit transactions".into(),
                         );
                         return Ok(());
@@ -469,23 +469,23 @@ impl App {
             info!(name = %params.name, "account created");
         }
 
-        self.account_form = None;
+        self.acct.form = None;
         self.input_mode = InputMode::Normal;
-        self.load_data().await?;
+        self.refresh_accounts().await?;
         Ok(())
     }
 
     pub(crate) async fn execute_deactivate(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::accounts::deactivate_account(&self.pool, id).await?;
         info!(id, "account deactivated");
-        self.load_data().await?;
-        clamp_selection(&mut self.account_table_state, self.accounts.len());
+        self.refresh_accounts().await?;
+        clamp_selection(&mut self.acct.table_state, self.accounts.len());
         Ok(())
     }
 }
 
 fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
-    let form = app.account_form.as_ref().unwrap();
+    let form = app.acct.form.as_ref().unwrap();
     let visible = form.visible_fields();
 
     let title = match form.mode {

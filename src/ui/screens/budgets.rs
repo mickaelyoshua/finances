@@ -130,7 +130,7 @@ impl BudgetForm {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    if app.budget_form.is_some() {
+    if app.budget.form.is_some() {
         render_form(frame, area, app);
     } else {
         render_list(frame, area, app);
@@ -145,13 +145,13 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
-        .budgets
+        .budget.items
         .iter()
         .map(|b| {
             let category_name = app.category_name(b.category_id);
 
             let spent = app
-                .budget_spent
+                .budget.spent
                 .get(&b.id)
                 .copied()
                 .unwrap_or(Decimal::ZERO);
@@ -198,18 +198,18 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    frame.render_stateful_widget(table, table_area, &mut app.budget_table_state);
+    frame.render_stateful_widget(table, table_area, &mut app.budget.table_state);
 
     let detail_content = match app
-        .budget_table_state
+        .budget.table_state
         .selected()
-        .and_then(|i| app.budgets.get(i))
+        .and_then(|i| app.budget.items.get(i))
     {
         Some(b) => {
             let category_name = app.category_name(b.category_id);
 
             let spent = app
-                .budget_spent
+                .budget.spent
                 .get(&b.id)
                 .copied()
                 .unwrap_or(Decimal::ZERO);
@@ -243,7 +243,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
-    let form = app.budget_form.as_ref().unwrap();
+    let form = app.budget.form.as_ref().unwrap();
     let is_edit = matches!(form.mode, BudgetFormMode::Edit(_));
 
     let title = if is_edit { "Edit Budget" } else { "New Budget" };
@@ -303,10 +303,10 @@ impl App {
     pub(crate) async fn handle_budgets_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
-                move_table_selection(&mut self.budget_table_state, self.budgets.len(), -1);
+                move_table_selection(&mut self.budget.table_state, self.budget.items.len(), -1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                move_table_selection(&mut self.budget_table_state, self.budgets.len(), 1);
+                move_table_selection(&mut self.budget.table_state, self.budget.items.len(), 1);
             }
             KeyCode::Char('n') => {
                 let has_expense_cat = self
@@ -317,26 +317,26 @@ impl App {
                     self.status_message =
                         Some(StatusMessage::error("Create an expense category first"));
                 } else {
-                    self.budget_form = Some(BudgetForm::new_create());
+                    self.budget.form = Some(BudgetForm::new_create());
                     self.input_mode = InputMode::Editing;
                 }
             }
             KeyCode::Char('e') => {
                 if let Some(b) = self
-                    .budget_table_state
+                    .budget.table_state
                     .selected()
-                    .and_then(|i| self.budgets.get(i))
+                    .and_then(|i| self.budget.items.get(i))
                 {
                     let b = b.clone();
-                    self.budget_form = Some(BudgetForm::new_edit(&b, &self.categories));
+                    self.budget.form = Some(BudgetForm::new_edit(&b, &self.categories));
                     self.input_mode = InputMode::Editing;
                 }
             }
             KeyCode::Char('d') => {
                 if let Some(b) = self
-                    .budget_table_state
+                    .budget.table_state
                     .selected()
-                    .and_then(|i| self.budgets.get(i))
+                    .and_then(|i| self.budget.items.get(i))
                 {
                     let budget_id = b.id;
                     let category_name = self.category_name(b.category_id).to_string();
@@ -349,19 +349,19 @@ impl App {
             KeyCode::Char('x') => {
                 let cats = &self.categories;
                 match crate::export::export_budgets(
-                    &self.budgets,
+                    &self.budget.items,
                     |id| {
                         cats.iter()
                             .find(|c| c.id == id)
                             .map(|c| c.name.clone())
                             .unwrap_or_else(|| "?".into())
                     },
-                    &self.budget_spent,
+                    &self.budget.spent,
                 ) {
                     Ok(path) => {
                         self.status_message = Some(StatusMessage::info(format!(
                             "Exported {} budgets to {}",
-                            self.budgets.len(),
+                            self.budget.items.len(),
                             path.display()
                         )));
                     }
@@ -377,7 +377,7 @@ impl App {
     }
 
     pub(crate) fn handle_budget_form_key(&mut self, code: KeyCode) {
-        let form = self.budget_form.as_mut().unwrap();
+        let form = self.budget.form.as_mut().unwrap();
         let is_edit = matches!(form.mode, BudgetFormMode::Edit(_));
 
         match code {
@@ -421,11 +421,11 @@ impl App {
     pub(crate) async fn submit_budget_form(&mut self) -> anyhow::Result<()> {
         use crate::db::budgets;
 
-        let form = self.budget_form.as_ref().unwrap();
+        let form = self.budget.form.as_ref().unwrap();
         let validated = match form.validate(&self.categories) {
             Ok(v) => v,
             Err(e) => {
-                self.budget_form.as_mut().unwrap().error = Some(e);
+                self.budget.form.as_mut().unwrap().error = Some(e);
                 return Ok(());
             }
         };
@@ -462,7 +462,7 @@ impl App {
                     if e.as_database_error()
                         .is_some_and(|db_err| db_err.is_unique_violation())
                     {
-                        self.budget_form.as_mut().unwrap().error =
+                        self.budget.form.as_mut().unwrap().error =
                             Some("A budget for this category and period already exists".into());
                         return Ok(());
                     }
@@ -471,17 +471,17 @@ impl App {
             }
         }
 
-        self.budget_form = None;
+        self.budget.form = None;
         self.input_mode = InputMode::Normal;
-        self.load_data().await?;
+        self.refresh_budgets().await?;
         Ok(())
     }
 
     pub(crate) async fn execute_delete_budget(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::budgets::delete_budget(&self.pool, id).await?;
         info!(id, "budget deleted");
-        self.load_data().await?;
-        clamp_selection(&mut self.budget_table_state, self.budgets.len());
+        self.refresh_budgets().await?;
+        clamp_selection(&mut self.budget.table_state, self.budget.items.len());
         Ok(())
     }
 }

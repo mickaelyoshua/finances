@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -240,4 +242,48 @@ pub async fn sum_credit_by_account_in_range(
     .fetch_one(pool)
     .await?;
     Ok((row.0.unwrap_or_default(), row.1.unwrap_or_default()))
+}
+
+/// Batch sum credit card expenses and incomes for multiple accounts, each with its own date range.
+/// Returns a HashMap from account_id to (total_expenses, total_incomes).
+///
+/// Uses a single query with a VALUES list joined against transactions, avoiding N+1.
+pub async fn sum_credit_by_accounts_batch(
+    pool: &PgPool,
+    ranges: &[(i32, NaiveDate, NaiveDate)],
+) -> Result<HashMap<i32, (Decimal, Decimal)>, sqlx::Error> {
+    use std::collections::HashMap;
+
+    if ranges.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let mut qb = QueryBuilder::<Postgres>::new(
+        "SELECT v.account_id,
+            COALESCE(SUM(CASE WHEN t.transaction_type = 'expense' THEN t.amount END), 0),
+            COALESCE(SUM(CASE WHEN t.transaction_type = 'income'  THEN t.amount END), 0)
+         FROM (VALUES ",
+    );
+    for (i, (account_id, date_from, date_to)) in ranges.iter().enumerate() {
+        if i > 0 {
+            qb.push(", ");
+        }
+        qb.push("(");
+        qb.push_bind(*account_id);
+        qb.push("::int, ");
+        qb.push_bind(*date_from);
+        qb.push("::date, ");
+        qb.push_bind(*date_to);
+        qb.push("::date)");
+    }
+    qb.push(
+        ") AS v(account_id, date_from, date_to) \
+         LEFT JOIN transactions t ON t.account_id = v.account_id \
+             AND t.payment_method = 'credit' \
+             AND t.date BETWEEN v.date_from AND v.date_to \
+         GROUP BY v.account_id",
+    );
+
+    let rows: Vec<(i32, Decimal, Decimal)> = qb.build_query_as().fetch_all(pool).await?;
+    Ok(rows.into_iter().map(|(id, e, i)| (id, (e, i))).collect())
 }

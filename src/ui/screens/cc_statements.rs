@@ -126,138 +126,141 @@ pub async fn build_statements(
 
     let mut statements: Vec<CreditCardStatement> = Vec::with_capacity(months + 1);
 
-    // Build closed statements (most recent first)
-    for close_date in &closing_dates {
-        let (period_start, period_end) = statement_period(*close_date, billing_day);
-        let due = statement_due_date(close_date.year(), close_date.month(), billing_day, due_day);
+    // ── Single-pass bucketing: assign each transaction/payment to its period ──
+    // Build all period boundaries first, then walk transactions once.
 
-        let mut charges = Decimal::ZERO;
-        let mut credits = Decimal::ZERO;
-        for t in &transactions {
-            if t.date >= period_start && t.date <= period_end {
-                if t.parsed_type() == crate::models::TransactionType::Expense {
-                    charges += t.amount;
-                } else {
-                    credits += t.amount;
-                }
-            }
-        }
-
-        // Payment attribution: card bills are paid after the statement closes,
-        // so payments between this close+1 and the next-newer close date
-        // are credited to this statement (not the one they fall within).
-        let pay_start = close_date.succ_opt().unwrap();
-        let pay_end = if close_date == &latest_close {
-            today
-        } else {
-            let idx = closing_dates.iter().position(|d| d == close_date).unwrap();
-            if idx > 0 {
-                closing_dates[idx - 1]
-            } else {
-                today
-            }
-        };
-
-        let paid: Decimal = payments
-            .iter()
-            .filter(|p| p.date >= pay_start && p.date <= pay_end)
-            .map(|p| p.amount)
-            .sum();
-
-        let total = charges - credits;
-        statements.push(CreditCardStatement {
-            period_start,
-            period_end,
-            due_date: due,
-            total_charges: charges,
-            total_credits: credits,
-            statement_total: total,
-            paid_amount: paid,
-            is_current: false,
-            is_upcoming: false,
-        });
-    }
-
-    // Build current (open) statement
+    // Current period
     let current_start = latest_close.succ_opt().unwrap();
     let (next_y, next_m) = next_month(latest_close.year(), latest_close.month());
     let current_close = clamped_day(next_y, next_m, billing_day);
     let current_due = statement_due_date(next_y, next_m, billing_day, due_day);
 
-    let mut charges = Decimal::ZERO;
-    let mut credits = Decimal::ZERO;
+    // Collect all periods: (period_start, period_end, kind)
+    #[derive(Clone, Copy)]
+    enum PeriodKind { Closed, Current, Upcoming }
+    struct PeriodInfo {
+        start: NaiveDate,
+        end: NaiveDate,
+        due: NaiveDate,
+        kind: PeriodKind,
+        charges: Decimal,
+        credits: Decimal,
+        paid: Decimal,
+    }
+
+    let mut periods: Vec<PeriodInfo> = Vec::with_capacity(months + future_closing_dates.len() + 1);
+
+    // Closed periods (most recent first in closing_dates)
+    for close_date in &closing_dates {
+        let (ps, pe) = statement_period(*close_date, billing_day);
+        let due = statement_due_date(close_date.year(), close_date.month(), billing_day, due_day);
+        periods.push(PeriodInfo {
+            start: ps, end: pe, due, kind: PeriodKind::Closed,
+            charges: Decimal::ZERO, credits: Decimal::ZERO, paid: Decimal::ZERO,
+        });
+    }
+
+    // Current period
+    periods.push(PeriodInfo {
+        start: current_start, end: current_close, due: current_due,
+        kind: PeriodKind::Current,
+        charges: Decimal::ZERO, credits: Decimal::ZERO, paid: Decimal::ZERO,
+    });
+
+    // Future periods
+    for close_date in &future_closing_dates {
+        if *close_date == current_close { continue; }
+        let (ps, pe) = statement_period(*close_date, billing_day);
+        let due = statement_due_date(close_date.year(), close_date.month(), billing_day, due_day);
+        periods.push(PeriodInfo {
+            start: ps, end: pe, due, kind: PeriodKind::Upcoming,
+            charges: Decimal::ZERO, credits: Decimal::ZERO, paid: Decimal::ZERO,
+        });
+    }
+
+    // Sort periods by start date for binary search
+    periods.sort_by_key(|p| p.start);
+
+    // Bucket transactions in a single pass
     for t in &transactions {
-        if t.date >= current_start && t.date <= today {
-            if t.parsed_type() == crate::models::TransactionType::Expense {
-                charges += t.amount;
-            } else {
-                credits += t.amount;
+        // Binary search: find the period whose start <= t.date, then verify t.date <= end
+        let idx = periods.partition_point(|p| p.start <= t.date);
+        if idx > 0 {
+            let p = &mut periods[idx - 1];
+            if t.date <= p.end {
+                if t.parsed_type() == crate::models::TransactionType::Expense {
+                    p.charges += t.amount;
+                } else {
+                    p.credits += t.amount;
+                }
             }
         }
     }
 
-    let total = charges - credits;
-    statements.insert(
-        0,
-        CreditCardStatement {
-            period_start: current_start,
-            period_end: current_close,
-            due_date: current_due,
-            total_charges: charges,
-            total_credits: credits,
-            statement_total: total,
-            paid_amount: Decimal::ZERO,
-            is_current: true,
-            is_upcoming: false,
-        },
-    );
+    // Bucket payments: payment attribution — payments after a close date are credited
+    // to the statement that just closed. Build payment windows from closing dates.
+    // For each closed period, payment window is (close_date+1 .. next_newer_close_date).
+    // For the latest closed statement, window extends to today.
+    {
+        // Build a sorted list of closing dates (ascending) for payment window lookup
+        let mut sorted_closes: Vec<NaiveDate> = closing_dates.clone();
+        sorted_closes.sort();
 
-    // The current/open statement is at index 0 right now
-    let mut current_idx: usize = 0;
-
-    // Build future (upcoming) statements — nearest future first
-    for close_date in &future_closing_dates {
-        // Skip the close date that matches the current open statement
-        if *close_date == current_close {
-            continue;
-        }
-
-        let (period_start, period_end) = statement_period(*close_date, billing_day);
-        let due = statement_due_date(close_date.year(), close_date.month(), billing_day, due_day);
-
-        let mut charges = Decimal::ZERO;
-        let mut credits = Decimal::ZERO;
-        for t in &transactions {
-            if t.date >= period_start && t.date <= period_end {
-                if t.parsed_type() == crate::models::TransactionType::Expense {
-                    charges += t.amount;
-                } else {
-                    credits += t.amount;
+        for payment in &payments {
+            // Find which statement this payment is attributed to:
+            // the largest closing date strictly less than payment.date
+            let close_idx = sorted_closes.partition_point(|&c| c < payment.date);
+            if close_idx > 0 {
+                let attributed_close = sorted_closes[close_idx - 1];
+                // Find the period with this closing date (end == close)
+                if let Some(p) = periods.iter_mut().find(|p| p.end == attributed_close && matches!(p.kind, PeriodKind::Closed)) {
+                    // Verify payment is within the attribution window
+                    let pay_start = attributed_close.succ_opt().unwrap();
+                    let pay_end = if close_idx < sorted_closes.len() {
+                        sorted_closes[close_idx]
+                    } else {
+                        today
+                    };
+                    if payment.date >= pay_start && payment.date <= pay_end {
+                        p.paid += payment.amount;
+                    }
                 }
             }
         }
+    }
 
-        let total = charges - credits;
-        // Skip future statements with no charges
-        if total == Decimal::ZERO {
-            continue;
+    // Build statement structs from periods
+    let mut current_idx: usize = 0;
+    for p in &periods {
+        let total = p.charges - p.credits;
+        match p.kind {
+            PeriodKind::Upcoming => {
+                if total == Decimal::ZERO { continue; }
+                statements.insert(0, CreditCardStatement {
+                    period_start: p.start, period_end: p.end, due_date: p.due,
+                    total_charges: p.charges, total_credits: p.credits,
+                    statement_total: total, paid_amount: Decimal::ZERO,
+                    is_current: false, is_upcoming: true,
+                });
+                current_idx += 1;
+            }
+            PeriodKind::Current => {
+                statements.insert(current_idx, CreditCardStatement {
+                    period_start: p.start, period_end: p.end, due_date: p.due,
+                    total_charges: p.charges, total_credits: p.credits,
+                    statement_total: total, paid_amount: Decimal::ZERO,
+                    is_current: true, is_upcoming: false,
+                });
+            }
+            PeriodKind::Closed => {
+                statements.push(CreditCardStatement {
+                    period_start: p.start, period_end: p.end, due_date: p.due,
+                    total_charges: p.charges, total_credits: p.credits,
+                    statement_total: total, paid_amount: p.paid,
+                    is_current: false, is_upcoming: false,
+                });
+            }
         }
-
-        statements.insert(
-            0,
-            CreditCardStatement {
-                period_start,
-                period_end,
-                due_date: due,
-                total_charges: charges,
-                total_credits: credits,
-                statement_total: total,
-                paid_amount: Decimal::ZERO,
-                is_current: false,
-                is_upcoming: true,
-            },
-        );
-        current_idx += 1; // current statement shifts down
     }
 
     Ok((statements, current_idx))
@@ -274,10 +277,19 @@ async fn build_all_accounts_statements(
         return Ok(Vec::new());
     }
 
-    // Build statements for each account and collect them
-    let mut all_stmts: Vec<CreditCardStatement> = Vec::new();
+    // Build statements for all accounts in parallel
+    let mut handles = Vec::with_capacity(cc_accounts.len());
     for account in cc_accounts {
-        let (stmts, _) = build_statements(pool, account, 12).await?;
+        let pool = pool.clone();
+        let account = (*account).clone();
+        handles.push(tokio::spawn(async move {
+            build_statements(&pool, &account, 12).await
+        }));
+    }
+
+    let mut all_stmts: Vec<CreditCardStatement> = Vec::new();
+    for handle in handles {
+        let (stmts, _) = handle.await??;
         all_stmts.extend(stmts);
     }
 
@@ -328,7 +340,7 @@ async fn build_all_accounts_statements(
 // ── Render ────────────────────────────────────────────────────────
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    match app.cc_statement_view {
+    match app.cc_stmt.view {
         StatementsView::List => render_list(frame, area, app),
         StatementsView::Detail => render_detail(frame, area, app),
     }
@@ -356,11 +368,11 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             Style::new().fg(Color::DarkGray),
         ))
     } else {
-        let display_name = if app.cc_statement_account_idx == 0 {
+        let display_name = if app.cc_stmt.account_idx == 0 {
             "All Accounts"
         } else {
             cc_accounts
-                .get(app.cc_statement_account_idx - 1)
+                .get(app.cc_stmt.account_idx - 1)
                 .unwrap_or(&"?")
         };
         let total_options = cc_accounts.len() + 1; // +1 for "All"
@@ -373,7 +385,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             Span::styled(
                 format!(
                     "  ({}/{})",
-                    app.cc_statement_account_idx + 1,
+                    app.cc_stmt.account_idx + 1,
                     total_options
                 ),
                 Style::new().fg(Color::DarkGray),
@@ -387,7 +399,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
-        .cc_statements
+        .cc_stmt.items
         .iter()
         .map(|s| {
             let status_style = match s.status_label() {
@@ -412,11 +424,11 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let title = if cc_accounts.is_empty() {
         "CC Statements".to_string()
-    } else if app.cc_statement_account_idx == 0 {
+    } else if app.cc_stmt.account_idx == 0 {
         "CC Statements — All Accounts".to_string()
     } else {
         let name = cc_accounts
-            .get(app.cc_statement_account_idx - 1)
+            .get(app.cc_stmt.account_idx - 1)
             .unwrap_or(&"?");
         format!("CC Statements — {}", name)
     };
@@ -438,13 +450,13 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    frame.render_stateful_widget(table, table_area, &mut app.cc_statement_table_state);
+    frame.render_stateful_widget(table, table_area, &mut app.cc_stmt.table_state);
 
     // Detail pane
     let detail_content = match app
-        .cc_statement_table_state
+        .cc_stmt.table_state
         .selected()
-        .and_then(|i| app.cc_statements.get(i))
+        .and_then(|i| app.cc_stmt.items.get(i))
     {
         Some(s) => {
             vec![
@@ -464,7 +476,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     format_brl(s.balance_due()),
                 )),
                 Line::from(Span::styled(
-                    if app.cc_statement_account_idx == 0 {
+                    if app.cc_stmt.account_idx == 0 {
                         " [h/l] Switch account"
                     } else {
                         " [Enter] View transactions  [p] Pay  [u] Unpay  [h/l] Switch account"
@@ -491,17 +503,21 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
             .areas(area);
 
     // Header with statement info
-    let stmt_info = if let Some(idx) = app.cc_statement_table_state.selected() {
-        if let Some(s) = app.cc_statements.get(idx) {
+    let stmt_info = if let Some(idx) = app.cc_stmt.table_state.selected() {
+        if let Some(s) = app.cc_stmt.items.get(idx) {
             let cc_accounts: Vec<&str> = app
                 .accounts
                 .iter()
                 .filter(|a| a.has_credit_card)
                 .map(|a| a.name.as_str())
                 .collect();
-            let account_name = cc_accounts
-                .get(app.cc_statement_account_idx)
-                .unwrap_or(&"?");
+            let account_name = if app.cc_stmt.account_idx > 0 {
+                cc_accounts
+                    .get(app.cc_stmt.account_idx - 1)
+                    .unwrap_or(&"?")
+            } else {
+                &"All Accounts"
+            };
             vec![Line::from(format!(
                 " {} — {} | {} - {} | Total: {} | Status: {}",
                 account_name,
@@ -526,7 +542,7 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
         .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
-        .cc_statement_detail_txns
+        .cc_stmt.detail_txns
         .iter()
         .map(|t| {
             let type_style = if t.parsed_type() == crate::models::TransactionType::Expense {
@@ -545,7 +561,7 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
         })
         .collect();
 
-    let count = app.cc_statement_detail_txns.len();
+    let count = app.cc_stmt.detail_txns.len();
     let table = Table::new(
         rows,
         [
@@ -568,7 +584,7 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    frame.render_stateful_widget(table, table_area, &mut app.cc_statement_detail_table_state);
+    frame.render_stateful_widget(table, table_area, &mut app.cc_stmt.detail_table_state);
 
     // Detail pane with key guide
     let detail_block = Block::default()
@@ -588,7 +604,7 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
 
 impl App {
     pub(crate) async fn handle_cc_statements_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
-        match self.cc_statement_view {
+        match self.cc_stmt.view {
             StatementsView::List => self.handle_cc_statements_list_key(code).await,
             StatementsView::Detail => self.handle_cc_statements_detail_key(code).await,
         }
@@ -598,43 +614,43 @@ impl App {
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
                 move_table_selection(
-                    &mut self.cc_statement_table_state,
-                    self.cc_statements.len(),
+                    &mut self.cc_stmt.table_state,
+                    self.cc_stmt.items.len(),
                     -1,
                 );
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 move_table_selection(
-                    &mut self.cc_statement_table_state,
-                    self.cc_statements.len(),
+                    &mut self.cc_stmt.table_state,
+                    self.cc_stmt.items.len(),
                     1,
                 );
             }
             KeyCode::Char('h') | KeyCode::Char('l') => {
                 let cc_count = self.accounts.iter().filter(|a| a.has_credit_card).count();
                 // +1 for "All Accounts" at index 0
-                cycle_index(&mut self.cc_statement_account_idx, cc_count + 1, code);
+                cycle_index(&mut self.cc_stmt.account_idx, cc_count + 1, code);
                 self.load_cc_statements().await?;
             }
             KeyCode::Enter => {
-                if self.cc_statement_account_idx == 0 {
+                if self.cc_stmt.account_idx == 0 {
                     self.status_message =
                         Some(StatusMessage::info("Select a specific account to view transactions"));
-                } else if let Some(idx) = self.cc_statement_table_state.selected()
-                    && idx < self.cc_statements.len()
+                } else if let Some(idx) = self.cc_stmt.table_state.selected()
+                    && idx < self.cc_stmt.items.len()
                 {
                     self.load_cc_statement_detail(idx).await?;
-                    self.cc_statement_view = StatementsView::Detail;
+                    self.cc_stmt.view = StatementsView::Detail;
                 }
             }
             KeyCode::Char('p') => {
-                if self.cc_statement_account_idx == 0 {
+                if self.cc_stmt.account_idx == 0 {
                     self.status_message =
                         Some(StatusMessage::info("Select a specific account to pay a statement"));
                 } else if let Some(stmt) = self
-                    .cc_statement_table_state
+                    .cc_stmt.table_state
                     .selected()
-                    .and_then(|i| self.cc_statements.get(i))
+                    .and_then(|i| self.cc_stmt.items.get(i))
                 {
                     if stmt.is_upcoming {
                         self.status_message =
@@ -648,7 +664,7 @@ impl App {
                     } else {
                         let cc_accounts: Vec<&crate::models::Account> =
                             self.accounts.iter().filter(|a| a.has_credit_card).collect();
-                        if let Some(account) = cc_accounts.get(self.cc_statement_account_idx - 1) {
+                        if let Some(account) = cc_accounts.get(self.cc_stmt.account_idx - 1) {
                             let balance = stmt.balance_due();
                             let label = stmt.label();
                             let pay_date = stmt.period_end.succ_opt().unwrap();
@@ -666,13 +682,13 @@ impl App {
                 }
             }
             KeyCode::Char('u') => {
-                if self.cc_statement_account_idx == 0 {
+                if self.cc_stmt.account_idx == 0 {
                     self.status_message =
                         Some(StatusMessage::info("Select a specific account to unpay a statement"));
                 } else if let Some((idx, stmt)) = self
-                    .cc_statement_table_state
+                    .cc_stmt.table_state
                     .selected()
-                    .and_then(|i| self.cc_statements.get(i).map(|s| (i, s)))
+                    .and_then(|i| self.cc_stmt.items.get(i).map(|s| (i, s)))
                 {
                     if stmt.is_upcoming || stmt.is_current {
                         self.status_message =
@@ -683,10 +699,10 @@ impl App {
                     } else {
                         let cc_accounts: Vec<&crate::models::Account> =
                             self.accounts.iter().filter(|a| a.has_credit_card).collect();
-                        if let Some(account) = cc_accounts.get(self.cc_statement_account_idx - 1) {
+                        if let Some(account) = cc_accounts.get(self.cc_stmt.account_idx - 1) {
                             let pay_start = stmt.period_end.succ_opt().unwrap();
                             let pay_end = if idx > 0 {
-                                let prev = &self.cc_statements[idx - 1];
+                                let prev = &self.cc_stmt.items[idx - 1];
                                 if prev.is_current || prev.is_upcoming {
                                     Local::now().date_naive()
                                 } else {
@@ -718,34 +734,34 @@ impl App {
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
                 move_table_selection(
-                    &mut self.cc_statement_detail_table_state,
-                    self.cc_statement_detail_txns.len(),
+                    &mut self.cc_stmt.detail_table_state,
+                    self.cc_stmt.detail_txns.len(),
                     -1,
                 );
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 move_table_selection(
-                    &mut self.cc_statement_detail_table_state,
-                    self.cc_statement_detail_txns.len(),
+                    &mut self.cc_stmt.detail_table_state,
+                    self.cc_stmt.detail_txns.len(),
                     1,
                 );
             }
             KeyCode::Enter => {
                 if let Some(txn) = self
-                    .cc_statement_detail_table_state
+                    .cc_stmt.detail_table_state
                     .selected()
-                    .and_then(|i| self.cc_statement_detail_txns.get(i))
+                    .and_then(|i| self.cc_stmt.detail_txns.get(i))
                 {
                     if let Some(ip_id) = txn.installment_purchase_id {
                         // Navigate to Installments screen and select the parent purchase
                         self.screen = Screen::Installments;
-                        if let Some(pos) = self.installments.iter().position(|ip| ip.id == ip_id) {
-                            self.installment_table_state.select(Some(pos));
+                        if let Some(pos) = self.inst.items.iter().position(|ip| ip.id == ip_id) {
+                            self.inst.table_state.select(Some(pos));
                         }
                     } else {
                         // Regular transaction — open edit form on Transactions screen
                         let txn = txn.clone();
-                        self.transaction_form = Some(TransactionForm::new_edit(
+                        self.txn.form = Some(TransactionForm::new_edit(
                             &txn,
                             &self.accounts,
                             &self.categories,
@@ -754,13 +770,13 @@ impl App {
                         self.input_mode = InputMode::Editing;
                         self.load_transactions().await?;
                     }
-                    self.cc_statement_view = StatementsView::List;
-                    self.cc_statement_detail_txns.clear();
+                    self.cc_stmt.view = StatementsView::List;
+                    self.cc_stmt.detail_txns.clear();
                 }
             }
             KeyCode::Esc => {
-                self.cc_statement_view = StatementsView::List;
-                self.cc_statement_detail_txns.clear();
+                self.cc_stmt.view = StatementsView::List;
+                self.cc_stmt.detail_txns.clear();
             }
             _ => {}
         }
@@ -771,55 +787,55 @@ impl App {
         let cc_accounts: Vec<&Account> =
             self.accounts.iter().filter(|a| a.has_credit_card).collect();
 
-        if self.cc_statement_account_idx == 0 {
+        if self.cc_stmt.account_idx == 0 {
             // "All Accounts" — aggregate across all CC accounts by closing month
-            self.cc_statements = build_all_accounts_statements(&self.pool, &cc_accounts).await?;
+            self.cc_stmt.items = build_all_accounts_statements(&self.pool, &cc_accounts).await?;
             // Select the current/open statement
             let current_idx = self
-                .cc_statements
+                .cc_stmt.items
                 .iter()
                 .position(|s| s.is_current)
                 .unwrap_or(0);
-            if !self.cc_statements.is_empty() {
-                self.cc_statement_table_state
-                    .select(Some(current_idx.min(self.cc_statements.len() - 1)));
+            if !self.cc_stmt.items.is_empty() {
+                self.cc_stmt.table_state
+                    .select(Some(current_idx.min(self.cc_stmt.items.len() - 1)));
             }
-        } else if let Some(account) = cc_accounts.get(self.cc_statement_account_idx - 1) {
+        } else if let Some(account) = cc_accounts.get(self.cc_stmt.account_idx - 1) {
             let (stmts, current_idx) = build_statements(&self.pool, account, 12).await?;
-            self.cc_statements = stmts;
+            self.cc_stmt.items = stmts;
             // Default selection to the current/open statement
-            if !self.cc_statements.is_empty() {
-                self.cc_statement_table_state
-                    .select(Some(current_idx.min(self.cc_statements.len() - 1)));
+            if !self.cc_stmt.items.is_empty() {
+                self.cc_stmt.table_state
+                    .select(Some(current_idx.min(self.cc_stmt.items.len() - 1)));
             }
         } else {
-            self.cc_statements.clear();
+            self.cc_stmt.items.clear();
         }
-        clamp_selection(&mut self.cc_statement_table_state, self.cc_statements.len());
-        self.cc_statement_view = StatementsView::List;
-        self.cc_statement_detail_txns.clear();
+        clamp_selection(&mut self.cc_stmt.table_state, self.cc_stmt.items.len());
+        self.cc_stmt.view = StatementsView::List;
+        self.cc_stmt.detail_txns.clear();
         Ok(())
     }
 
     async fn load_cc_statement_detail(&mut self, stmt_idx: usize) -> anyhow::Result<()> {
-        if let Some(stmt) = self.cc_statements.get(stmt_idx) {
+        if let Some(stmt) = self.cc_stmt.items.get(stmt_idx) {
             let cc_accounts: Vec<&Account> =
                 self.accounts.iter().filter(|a| a.has_credit_card).collect();
-            if let Some(account) = cc_accounts.get(self.cc_statement_account_idx - 1) {
+            if let Some(account) = cc_accounts.get(self.cc_stmt.account_idx - 1) {
                 let end = if stmt.is_current {
                     Local::now().date_naive()
                 } else {
                     stmt.period_end
                 };
-                self.cc_statement_detail_txns = db::transactions::list_credit_by_account(
+                self.cc_stmt.detail_txns = db::transactions::list_credit_by_account(
                     &self.pool,
                     account.id,
                     stmt.period_start,
                     end,
                 )
                 .await?;
-                self.cc_statement_detail_table_state.select(
-                    if self.cc_statement_detail_txns.is_empty() {
+                self.cc_stmt.detail_table_state.select(
+                    if self.cc_stmt.detail_txns.is_empty() {
                         None
                     } else {
                         Some(0)
@@ -840,8 +856,9 @@ impl App {
         db::credit_card_payments::create_payment(&self.pool, account_id, amount, date, description)
             .await?;
         tracing::info!(account_id, %amount, description, "credit card statement paid");
-        self.load_data().await?;
+        self.refresh_balances().await?;
         self.load_cc_statements().await?;
+        self.refresh_dashboard_statements().await?;
         self.status_message = Some(StatusMessage::info("Statement paid"));
         Ok(())
     }
@@ -857,8 +874,9 @@ impl App {
         )
         .await?;
         tracing::info!(account_id, %pay_start, %pay_end, deleted, "credit card statement unpaid");
-        self.load_data().await?;
+        self.refresh_balances().await?;
         self.load_cc_statements().await?;
+        self.refresh_dashboard_statements().await?;
         self.status_message = Some(StatusMessage::info(format!(
             "Removed {} payment{}",
             deleted,

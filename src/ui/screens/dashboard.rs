@@ -11,19 +11,19 @@ use rust_decimal::prelude::ToPrimitive;
 use crate::ui::{App, components::format::format_brl};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    let has_notifs = !app.notifications.is_empty();
-    let has_cc = !app.dashboard_current_statements.is_empty();
+    let has_notifs = !app.dashboard.notifications.is_empty();
+    let has_cc = !app.dashboard.current_statements.is_empty();
 
     let cc_height = if has_cc {
         // +2 for border, +2 for separator + total line
-        (app.dashboard_current_statements.len() as u16 + 4).min(10)
+        (app.dashboard.current_statements.len() as u16 + 4).min(10)
     } else {
         0
     };
 
     let mut constraints: Vec<Constraint> = Vec::new();
     if has_notifs {
-        let notif_height = (app.notifications.len() as u16 + 2).min(10);
+        let notif_height = (app.dashboard.notifications.len() as u16 + 2).min(10);
         constraints.push(Constraint::Length(notif_height));
     }
     constraints.push(Constraint::Min(5)); // balances
@@ -58,16 +58,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_notifications(frame: &mut Frame, area: Rect, app: &App) {
     let lines: Vec<Line> = app
-        .notifications
+        .dashboard.notifications
         .iter()
         .enumerate()
         .map(|(i, n)| {
-            let style = if i == app.notification_selection {
+            let style = if i == app.dashboard.notification_selection {
                 Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {
                 Style::new().fg(Color::White)
             };
-            let marker = if i == app.notification_selection {
+            let marker = if i == app.dashboard.notification_selection {
                 "▸ "
             } else {
                 "  "
@@ -78,7 +78,7 @@ fn render_notifications(frame: &mut Frame, area: Rect, app: &App) {
 
     let title = format!(
         "Notifications ({} unread) — r: dismiss  R: dismiss all",
-        app.notifications.len()
+        app.dashboard.notifications.len()
     );
     let block = Block::default()
         .borders(Borders::ALL)
@@ -174,7 +174,7 @@ fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_current_statements(frame: &mut Frame, area: Rect, app: &App) {
     let mut lines: Vec<Line> = app
-        .dashboard_current_statements
+        .dashboard.current_statements
         .iter()
         .map(|(name, stmt)| {
             Line::from(vec![
@@ -204,9 +204,9 @@ fn render_current_statements(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    if app.dashboard_current_statements.len() > 1 {
+    if app.dashboard.current_statements.len() > 1 {
         let total: Decimal = app
-            .dashboard_current_statements
+            .dashboard.current_statements
             .iter()
             .map(|(_, s)| s.statement_total)
             .sum();
@@ -236,13 +236,13 @@ fn render_current_statements(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_budgets(frame: &mut Frame, area: Rect, app: &App) {
     let lines: Vec<Line> = app
-        .budgets
+        .budget.items
         .iter()
         .map(|b| {
             let cat_name = app.category_name(b.category_id);
 
             let spent = app
-                .budget_spent
+                .budget.spent
                 .get(&b.id)
                 .copied()
                 .unwrap_or(Decimal::ZERO);
@@ -282,10 +282,10 @@ fn render_budgets(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_recurring(frame: &mut Frame, area: Rect, app: &App) {
-    let lines: Vec<Line> = if app.pending_recurring.is_empty() {
+    let lines: Vec<Line> = if app.recur.pending.is_empty() {
         vec![Line::from("  No pending recurring transactions.")]
     } else {
-        app.pending_recurring
+        app.recur.pending
             .iter()
             .map(|r| {
                 Line::from(format!(

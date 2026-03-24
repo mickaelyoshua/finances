@@ -116,7 +116,7 @@ impl TransferForm {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    if app.transfer_form.is_some() {
+    if app.xfer.form.is_some() {
         render_form(frame, area, app);
     } else {
         render_list(frame, area, app);
@@ -131,7 +131,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
-        .transfers
+        .xfer.items
         .iter()
         .map(|t| {
             Row::new([
@@ -158,10 +158,10 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title(if app.transfer_count > 0 {
-                let start = app.transfer_offset + 1;
-                let end = app.transfer_offset + app.transfers.len() as u64;
-                format!("Transfers ({start}-{end} of {})", app.transfer_count)
+            .title(if app.xfer.count > 0 {
+                let start = app.xfer.offset + 1;
+                let end = app.xfer.offset + app.xfer.items.len() as u64;
+                format!("Transfers ({start}-{end} of {})", app.xfer.count)
             } else {
                 "Transfers (0)".to_string()
             }),
@@ -172,12 +172,12 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    frame.render_stateful_widget(table, table_area, &mut app.transfer_table_state);
+    frame.render_stateful_widget(table, table_area, &mut app.xfer.table_state);
 
     let detail_content = match app
-        .transfer_table_state
+        .xfer.table_state
         .selected()
-        .and_then(|i| app.transfers.get(i))
+        .and_then(|i| app.xfer.items.get(i))
     {
         Some(t) => {
             vec![
@@ -209,7 +209,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
-    let form = app.transfer_form.as_ref().unwrap();
+    let form = app.xfer.form.as_ref().unwrap();
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -243,10 +243,10 @@ impl App {
     pub(crate) async fn handle_transfers_key(&mut self, code: KeyCode) -> anyhow::Result<()> {
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
-                move_table_selection(&mut self.transfer_table_state, self.transfers.len(), -1);
+                move_table_selection(&mut self.xfer.table_state, self.xfer.items.len(), -1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                move_table_selection(&mut self.transfer_table_state, self.transfers.len(), 1);
+                move_table_selection(&mut self.xfer.table_state, self.xfer.items.len(), 1);
             }
             KeyCode::Char('n') => {
                 if self.accounts.len() < 2 {
@@ -254,15 +254,15 @@ impl App {
                         "Need at least 2 accounts for a transfer",
                     ));
                 } else {
-                    self.transfer_form = Some(TransferForm::new_create());
+                    self.xfer.form = Some(TransferForm::new_create());
                     self.input_mode = InputMode::Editing;
                 }
             }
             KeyCode::Char('d') => {
                 if let Some(t) = self
-                    .transfer_table_state
+                    .xfer.table_state
                     .selected()
-                    .and_then(|i| self.transfers.get(i))
+                    .and_then(|i| self.xfer.items.get(i))
                 {
                     let t_id = t.id;
                     let t_desc = t.description.clone();
@@ -300,18 +300,18 @@ impl App {
                 }
             }
             KeyCode::PageUp => {
-                if self.transfer_offset > 0 {
-                    self.transfer_offset = self.transfer_offset.saturating_sub(PAGE_SIZE);
+                if self.xfer.offset > 0 {
+                    self.xfer.offset = self.xfer.offset.saturating_sub(PAGE_SIZE);
                     self.load_transfers().await?;
-                    self.transfer_table_state.select(Some(0));
+                    self.xfer.table_state.select(Some(0));
                 }
             }
             KeyCode::PageDown => {
-                let next = self.transfer_offset + PAGE_SIZE;
-                if next < self.transfer_count {
-                    self.transfer_offset = next;
+                let next = self.xfer.offset + PAGE_SIZE;
+                if next < self.xfer.count {
+                    self.xfer.offset = next;
                     self.load_transfers().await?;
-                    self.transfer_table_state.select(Some(0));
+                    self.xfer.table_state.select(Some(0));
                 }
             }
             _ => {}
@@ -320,7 +320,7 @@ impl App {
     }
 
     pub(crate) fn handle_transfer_form_key(&mut self, code: KeyCode) {
-        let form = self.transfer_form.as_mut().unwrap();
+        let form = self.xfer.form.as_mut().unwrap();
         match code {
             KeyCode::Tab | KeyCode::Down => {
                 if form.active_field < TransferField::ALL.len() - 1 {
@@ -353,11 +353,11 @@ impl App {
     pub(crate) async fn submit_transfer_form(&mut self) -> anyhow::Result<()> {
         use crate::db::transfers;
 
-        let form = self.transfer_form.as_ref().unwrap();
+        let form = self.xfer.form.as_ref().unwrap();
         let validated = match form.validate(&self.accounts) {
             Ok(v) => v,
             Err(e) => {
-                self.transfer_form.as_mut().unwrap().error = Some(e);
+                self.xfer.form.as_mut().unwrap().error = Some(e);
                 return Ok(());
             }
         };
@@ -377,17 +377,19 @@ impl App {
             "transfer created"
         );
 
-        self.transfer_form = None;
+        self.xfer.form = None;
         self.input_mode = InputMode::Normal;
-        self.load_data().await?;
+        self.load_transfers().await?;
+        self.refresh_balances().await?;
         Ok(())
     }
 
     pub(crate) async fn execute_delete_transfer(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::transfers::delete_transfer(&self.pool, id).await?;
         info!(id, "transfer deleted");
-        self.load_data().await?;
-        clamp_selection(&mut self.transfer_table_state, self.transfers.len());
+        self.load_transfers().await?;
+        self.refresh_balances().await?;
+        clamp_selection(&mut self.xfer.table_state, self.xfer.items.len());
         Ok(())
     }
 }
