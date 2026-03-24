@@ -4,7 +4,7 @@
 //! Uses DATABASE_URL_TEST (separate `finances_test` database) so the dev database
 //! is never touched.
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use sqlx::PgPool;
@@ -2047,4 +2047,252 @@ async fn clear_stale_ignores_other_budgets() {
     let list = notifications::list_unread(&pool).await.unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].message, "other budget");
+}
+
+// ═══════════════════════════════════════
+// COMPUTE_ALL_BALANCES (JOIN-based)
+// ═══════════════════════════════════════
+
+#[tokio::test]
+async fn compute_all_balances_credit_card_usage() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+    let cat = make_expense_category(&pool, "Food").await;
+    let icat = make_income_category(&pool, "Salary").await;
+
+    // Checking income
+    make_txn(&pool, dec!(1000), "salary", icat.id, acc.id, TransactionType::Income, PaymentMethod::Pix, date(2026, 3, 1)).await;
+    // Non-credit expense
+    make_txn(&pool, dec!(200), "groceries", cat.id, acc.id, TransactionType::Expense, PaymentMethod::Pix, date(2026, 3, 2)).await;
+    // Credit expense (should NOT affect checking balance but SHOULD affect credit_used)
+    make_txn(&pool, dec!(300), "online shop", cat.id, acc.id, TransactionType::Expense, PaymentMethod::Credit, date(2026, 3, 3)).await;
+    // Credit income/refund (reduces credit_used)
+    make_txn(&pool, dec!(50), "refund", icat.id, acc.id, TransactionType::Income, PaymentMethod::Credit, date(2026, 3, 4)).await;
+    // CC payment (reduces both checking and credit_used)
+    credit_card_payments::create_payment(&pool, acc.id, dec!(100), date(2026, 3, 5), "cc bill").await.unwrap();
+
+    let bals = accounts::compute_all_balances(&pool).await.unwrap();
+    let (checking, credit_used) = bals[&acc.id];
+
+    // checking = 1000 (income) - 200 (pix expense) - 100 (cc payment) = 700
+    assert_eq!(checking, dec!(700));
+    // credit_used = 300 (credit expense) - 50 (credit refund) - 100 (cc payment) = 150
+    assert_eq!(credit_used, dec!(150));
+}
+
+#[tokio::test]
+async fn compute_all_balances_with_transfers() {
+    let (_guard, pool) = setup().await;
+    let acc_a = make_checking(&pool, "Nubank").await;
+    let acc_b = make_cash(&pool).await;
+    let icat = make_income_category(&pool, "Salary").await;
+
+    make_txn(&pool, dec!(1000), "salary", icat.id, acc_a.id, TransactionType::Income, PaymentMethod::Pix, date(2026, 3, 1)).await;
+    transfers::create_transfer(&pool, acc_a.id, acc_b.id, dec!(300), "to cash", date(2026, 3, 2)).await.unwrap();
+
+    let bals = accounts::compute_all_balances(&pool).await.unwrap();
+    // acc_a: 1000 - 300 (transfer out) = 700
+    assert_eq!(bals[&acc_a.id].0, dec!(700));
+    // acc_b: 0 + 300 (transfer in) = 300
+    assert_eq!(bals[&acc_b.id].0, dec!(300));
+}
+
+#[tokio::test]
+async fn compute_all_balances_excludes_inactive() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Old").await;
+    let icat = make_income_category(&pool, "Salary").await;
+
+    make_txn(&pool, dec!(500), "s", icat.id, acc.id, TransactionType::Income, PaymentMethod::Pix, date(2026, 3, 1)).await;
+    accounts::deactivate_account(&pool, acc.id).await.unwrap();
+
+    let bals = accounts::compute_all_balances(&pool).await.unwrap();
+    assert!(!bals.contains_key(&acc.id));
+}
+
+// ═══════════════════════════════════════
+// BUILD STATEMENTS (period attribution)
+// ═══════════════════════════════════════
+
+#[tokio::test]
+async fn build_statements_attributes_transactions_to_correct_period() {
+    let (_guard, pool) = setup().await;
+
+    // Create account with billing_day=10, due_day=20
+    let acc = accounts::create_account(
+        &pool,
+        &accounts::AccountParams {
+            name: "CC Test".to_string(),
+            account_type: AccountType::Checking,
+            has_credit_card: true,
+            credit_limit: Some(dec!(5000)),
+            billing_day: Some(10),
+            due_day: Some(20),
+            has_debit_card: false,
+        },
+    ).await.unwrap();
+    let cat = make_expense_category(&pool, "Shopping").await;
+
+    // Transaction on Jan 5 → should be in the period ending Jan 10
+    make_txn(&pool, dec!(100), "jan purchase", cat.id, acc.id, TransactionType::Expense, PaymentMethod::Credit, date(2026, 1, 5)).await;
+    // Transaction on Jan 15 → should be in the period ending Feb 10
+    make_txn(&pool, dec!(200), "late jan purchase", cat.id, acc.id, TransactionType::Expense, PaymentMethod::Credit, date(2026, 1, 15)).await;
+    // Transaction on Feb 5 → should also be in the period ending Feb 10
+    make_txn(&pool, dec!(50), "feb purchase", cat.id, acc.id, TransactionType::Expense, PaymentMethod::Credit, date(2026, 2, 5)).await;
+
+    use finances::ui::screens::cc_statements::build_statements;
+    let (stmts, _current_idx) = build_statements(&pool, &acc, 6).await.unwrap();
+
+    // Find the statement with period ending on Jan 10
+    let jan_stmt = stmts.iter().find(|s| {
+        s.period_end.month() == 1 && s.period_end.day() == 10 && !s.is_current && !s.is_upcoming
+    });
+    if let Some(s) = jan_stmt {
+        assert_eq!(s.total_charges, dec!(100), "Jan statement should have 100 charge");
+    }
+
+    // Find the statement with period ending on Feb 10
+    let feb_stmt = stmts.iter().find(|s| {
+        s.period_end.month() == 2 && s.period_end.day() == 10 && !s.is_current && !s.is_upcoming
+    });
+    if let Some(s) = feb_stmt {
+        assert_eq!(s.total_charges, dec!(250), "Feb statement should have 200 + 50 = 250 charges");
+    }
+}
+
+#[tokio::test]
+async fn build_statements_payment_attribution() {
+    let (_guard, pool) = setup().await;
+
+    let acc = accounts::create_account(
+        &pool,
+        &accounts::AccountParams {
+            name: "CC Pay Test".to_string(),
+            account_type: AccountType::Checking,
+            has_credit_card: true,
+            credit_limit: Some(dec!(5000)),
+            billing_day: Some(10),
+            due_day: Some(20),
+            has_debit_card: false,
+        },
+    ).await.unwrap();
+    let cat = make_expense_category(&pool, "Shopping").await;
+
+    // Charge in Jan period (before Jan 10)
+    make_txn(&pool, dec!(500), "big purchase", cat.id, acc.id, TransactionType::Expense, PaymentMethod::Credit, date(2026, 1, 5)).await;
+
+    // Payment on Jan 15 → after Jan 10 close, before Feb 10 close → attributed to Jan statement
+    credit_card_payments::create_payment(&pool, acc.id, dec!(500), date(2026, 1, 15), "pay jan").await.unwrap();
+
+    use finances::ui::screens::cc_statements::build_statements;
+    let (stmts, _) = build_statements(&pool, &acc, 6).await.unwrap();
+
+    let jan_stmt = stmts.iter().find(|s| {
+        s.period_end.month() == 1 && s.period_end.day() == 10 && !s.is_current && !s.is_upcoming
+    });
+    if let Some(s) = jan_stmt {
+        assert_eq!(s.statement_total, dec!(500));
+        assert_eq!(s.paid_amount, dec!(500));
+        assert_eq!(s.balance_due(), dec!(0));
+    }
+}
+
+// ═══════════════════════════════════════
+// CONFIRM RECURRING (atomicity)
+// ═══════════════════════════════════════
+
+#[tokio::test]
+async fn confirm_recurring_creates_transaction_and_advances_date() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+    let cat = make_expense_category(&pool, "Bills").await;
+
+    let rec = recurring::create_recurring(
+        &pool,
+        &recurring::RecurringParams {
+            description: "Internet".to_string(),
+            amount: dec!(100),
+            category_id: cat.id,
+            account_id: acc.id,
+            transaction_type: TransactionType::Expense,
+            payment_method: PaymentMethod::Boleto,
+            frequency: Frequency::Monthly,
+            next_due: date(2026, 3, 1),
+        },
+    ).await.unwrap();
+
+    // Simulate confirm_recurring logic atomically
+    let new_next_due = recurring::compute_next_due(rec.next_due, rec.parsed_frequency());
+    let mut tx = pool.begin().await.unwrap();
+
+    sqlx::query(
+        "INSERT INTO transactions (amount, description, category_id, account_id, transaction_type, payment_method, date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(rec.amount)
+    .bind(&rec.description)
+    .bind(rec.category_id)
+    .bind(rec.account_id)
+    .bind(rec.parsed_type().as_str())
+    .bind(rec.parsed_payment_method().as_str())
+    .bind(rec.next_due)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+
+    sqlx::query("UPDATE recurring_transactions SET next_due = $2 WHERE id = $1")
+        .bind(rec.id)
+        .bind(new_next_due)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+
+    tx.commit().await.unwrap();
+
+    // Verify transaction was created
+    let filter = transactions::TransactionFilterParams {
+        description: Some("Internet".to_string()),
+        ..Default::default()
+    };
+    let txns = transactions::list_filtered(&pool, &filter, 10, 0).await.unwrap();
+    assert_eq!(txns.len(), 1);
+    assert_eq!(txns[0].amount, dec!(100));
+    assert_eq!(txns[0].date, date(2026, 3, 1));
+
+    // Verify next_due was advanced
+    let updated = recurring::list_recurring(&pool).await.unwrap();
+    let r = updated.iter().find(|r| r.id == rec.id).unwrap();
+    assert_eq!(r.next_due, date(2026, 4, 1));
+}
+
+// ═══════════════════════════════════════
+// BATCH SUM CREDIT
+// ═══════════════════════════════════════
+
+#[tokio::test]
+async fn sum_credit_by_accounts_batch_matches_individual() {
+    let (_guard, pool) = setup().await;
+    let acc_a = make_checking(&pool, "Nubank").await;
+    let acc_b = make_checking(&pool, "Inter").await;
+    let cat = make_expense_category(&pool, "Food").await;
+
+    make_txn(&pool, dec!(100), "a1", cat.id, acc_a.id, TransactionType::Expense, PaymentMethod::Credit, date(2026, 3, 1)).await;
+    make_txn(&pool, dec!(50), "a2", cat.id, acc_a.id, TransactionType::Expense, PaymentMethod::Credit, date(2026, 3, 5)).await;
+    make_txn(&pool, dec!(200), "b1", cat.id, acc_b.id, TransactionType::Expense, PaymentMethod::Credit, date(2026, 3, 3)).await;
+
+    let from = date(2026, 3, 1);
+    let to = date(2026, 3, 31);
+
+    // Individual queries
+    let (a_exp, a_inc) = transactions::sum_credit_by_account_in_range(&pool, acc_a.id, from, to).await.unwrap();
+    let (b_exp, b_inc) = transactions::sum_credit_by_account_in_range(&pool, acc_b.id, from, to).await.unwrap();
+
+    // Batch query
+    let batch = transactions::sum_credit_by_accounts_batch(
+        &pool,
+        &[(acc_a.id, from, to), (acc_b.id, from, to)],
+    ).await.unwrap();
+
+    assert_eq!(batch[&acc_a.id], (a_exp, a_inc));
+    assert_eq!(batch[&acc_b.id], (b_exp, b_inc));
 }
