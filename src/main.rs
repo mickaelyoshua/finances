@@ -192,10 +192,6 @@ fn dirs_log_dir() -> std::path::PathBuf {
 
 /// Initialise tracing with a file appender.
 ///
-/// Returns a `WorkerGuard` that **must be held alive** for the lifetime of the
-/// program — dropping it flushes and closes the log file. The guard is stored
-/// in `main` as `_guard` so Rust drops it at the end of the scope.
-///
 /// Log level defaults to `info` and can be overridden with the `RUST_LOG`
 /// environment variable (e.g. `RUST_LOG=debug`).
 fn init_tracing(file_appender: tracing_appender::rolling::RollingFileAppender) {
