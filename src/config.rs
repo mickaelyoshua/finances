@@ -1,3 +1,9 @@
+//! CLI configuration and environment file loading.
+//!
+//! The `--prod` flag switches between `.env` (local docker-compose) and
+//! `.env.prod` (Neon TLS). Panics on missing files are intentional — the
+//! binary cannot do anything useful without a database URL.
+
 use clap::Parser;
 
 #[derive(Parser)]

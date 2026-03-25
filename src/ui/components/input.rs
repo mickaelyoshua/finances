@@ -1,3 +1,10 @@
+//! Single-line text input widget with cursor movement.
+//!
+//! The cursor is tracked as a **character index** (not byte offset) so that
+//! multi-byte UTF-8 characters (accents, emoji) are handled correctly.
+//! [`InputField::byte_offset`] converts to byte position when mutating
+//! the underlying `String`.
+
 use crossterm::event::KeyCode;
 use ratatui::{
     style::{Color, Modifier, Style},

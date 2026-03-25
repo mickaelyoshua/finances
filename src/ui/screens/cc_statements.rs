@@ -1,3 +1,10 @@
+//! Credit card statement screen — lists billing cycles per account.
+//!
+//! [`build_statements`] reconstructs past, current (open), and future
+//! (projected from installments) statements by walking backwards and
+//! forwards from today's billing-day closing date. Payment attribution
+//! matches CC payments that fall within each statement's date range.
+
 use chrono::{Datelike, Local, NaiveDate};
 use crossterm::event::KeyCode;
 use ratatui::{

@@ -1,3 +1,11 @@
+//! Recurring transaction templates and due-date advancement.
+//!
+//! A recurring transaction is a template (amount, category, frequency) with a
+//! `next_due` date. When the user confirms a pending recurrence, the TUI
+//! creates a real transaction and calls [`advance_next_due`] to bump the date
+//! forward by one frequency period. Soft-deleted (`active = FALSE`) rather
+//! than removed so historical patterns are preserved.
+
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use sqlx::PgPool;

@@ -1,3 +1,12 @@
+//! Top-level rendering pipeline.
+//!
+//! Layout (top to bottom): **tab bar** → **content** → **status bar**.
+//! A [`ConfirmPopup`] renders as a centered overlay on top of everything.
+//!
+//! The tab bar auto-scrolls when the terminal is too narrow to show all 10
+//! tabs at once, keeping the active tab visible with `◀`/`▶` overflow
+//! indicators on the edges.
+
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},

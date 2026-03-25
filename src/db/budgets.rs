@@ -1,3 +1,12 @@
+//! Budget CRUD and spending computation.
+//!
+//! Each budget ties one category to a spending cap for a period (weekly,
+//! monthly, or yearly). The DB enforces `UNIQUE(category_id, period)`.
+//!
+//! [`compute_all_spending`] calculates current-period spending for every
+//! budget in a single query by using a `CASE` on `b.period` to pick the
+//! correct start date, avoiding one query per budget.
+
 use std::collections::HashMap;
 
 use chrono::NaiveDate;

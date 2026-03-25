@@ -1,3 +1,15 @@
+//! Entry point for the finances binary.
+//!
+//! Startup sequence: parse CLI flags → load `.env` / `.env.prod` → connect to
+//! PostgreSQL (with retry) → branch into one of three modes:
+//!
+//! 1. **`--migrate`** — run `sqlx::migrate!()` and exit.
+//! 2. **`--notify`** — evaluate alert conditions (no transactions today,
+//!    overdue recurring, budget thresholds) → upsert DB notifications →
+//!    send a combined desktop notification.
+//! 3. **TUI** (default) — enter raw-mode terminal, run the Elm/TEA event
+//!    loop (`draw → handle_key → tick`), and restore terminal on exit.
+
 use finances::config;
 use finances::db;
 use finances::ui;

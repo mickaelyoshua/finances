@@ -1,3 +1,13 @@
+//! Transaction CRUD with dynamic filtering via [`QueryBuilder`].
+//!
+//! The filter system uses `WHERE TRUE` as a base so every clause can
+//! unconditionally prepend `AND`. Description search uses `ILIKE` with
+//! escaped wildcards (`%`, `_`, `\`) to prevent SQL pattern injection.
+//!
+//! Batch helpers ([`sum_credit_by_accounts_batch`]) use a `VALUES` list
+//! joined against the transactions table to compute per-account credit
+//! totals in a single round trip, avoiding N+1 queries.
+
 use std::collections::HashMap;
 
 use chrono::NaiveDate;

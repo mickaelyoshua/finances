@@ -1,3 +1,14 @@
+//! Account CRUD and balance computation.
+//!
+//! Accounts are soft-deleted (`active = FALSE`) rather than removed, because
+//! historical transactions still reference them. [`list_all_account_names`]
+//! includes inactive accounts so display lookups never return "?".
+//!
+//! Balance computation lives here rather than in a separate module because it
+//! depends entirely on the account→transaction/transfer/payment relationships.
+//! [`compute_all_balances`] runs a single query with pre-aggregated subqueries
+//! to avoid N+1 per-account round trips.
+
 use std::collections::HashMap;
 
 use rust_decimal::Decimal;

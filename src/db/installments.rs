@@ -1,3 +1,14 @@
+//! Installment purchase (parcelas) management.
+//!
+//! An installment purchase is a single agreement that generates N child
+//! transactions — one per month, each as a `credit` expense. Both create
+//! and update operations are **atomic**: they run inside an explicit
+//! database transaction so the parent row and all child transactions are
+//! committed together or not at all.
+//!
+//! The last installment absorbs any rounding remainder so the child amounts
+//! always sum exactly to `total_amount`.
+
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use sqlx::PgPool;

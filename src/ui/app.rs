@@ -1,3 +1,20 @@
+//! Central application state and key dispatch (Elm/TEA architecture).
+//!
+//! [`App`] is the single source of truth: it owns the DB pool, cached data,
+//! and per-screen state structs. The event loop in `main.rs` drives a
+//! `draw → handle_key → tick` cycle where:
+//!
+//! - **`draw`** renders the current screen from `App` (pure read).
+//! - **`handle_key`** dispatches input through three layers:
+//!   1. Popup (if active) — consumes all keys.
+//!   2. [`InputMode`] gate — `Normal` routes to screen handlers + global nav;
+//!      `Editing` routes to the active form; `Filtering` routes to the filter bar.
+//!   3. Screen-specific handler (e.g. `handle_accounts_key`).
+//! - **`tick`** decrements status-message countdowns.
+//!
+//! Shared data (accounts, categories, balances, name maps) is cached at the
+//! top level and refreshed after mutations via targeted `refresh_*` helpers.
+
 use std::collections::HashMap;
 
 use chrono::{Local, NaiveDate};
