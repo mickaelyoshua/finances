@@ -47,6 +47,7 @@ impl std::str::FromStr for CategoryType {
 pub struct Category {
     pub id: i32,
     pub name: String,
+    pub name_pt: Option<String>,
     pub category_type: String,
     pub created_at: DateTime<Utc>,
 }

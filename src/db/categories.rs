@@ -21,12 +21,14 @@ pub async fn list_by_type(
 pub async fn create_category(
     pool: &PgPool,
     name: &str,
+    name_pt: Option<&str>,
     category_type: CategoryType,
 ) -> Result<Category, sqlx::Error> {
     sqlx::query_as::<_, Category>(
-        "INSERT INTO categories (name, category_type) VALUES ($1, $2) RETURNING *",
+        "INSERT INTO categories (name, name_pt, category_type) VALUES ($1, $2, $3) RETURNING *",
     )
     .bind(name)
+    .bind(name_pt)
     .bind(category_type.as_str())
     .fetch_one(pool)
     .await
@@ -36,10 +38,12 @@ pub async fn update_category(
     pool: &PgPool,
     id: i32,
     name: &str,
+    name_pt: Option<&str>,
     category_type: CategoryType,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE categories SET name = $1, category_type = $2 WHERE id = $3")
+    sqlx::query("UPDATE categories SET name = $1, name_pt = $2, category_type = $3 WHERE id = $4")
         .bind(name)
+        .bind(name_pt)
         .bind(category_type.as_str())
         .bind(id)
         .execute(pool)
