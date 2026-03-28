@@ -1,6 +1,7 @@
 pub mod app;
 pub mod components;
 pub mod event;
+pub mod i18n;
 pub mod render;
 pub mod screens;
 
