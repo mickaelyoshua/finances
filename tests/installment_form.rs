@@ -5,6 +5,7 @@ use chrono::Utc;
 use rust_decimal_macros::dec;
 
 use finances::models::*;
+use finances::ui::i18n::Locale;
 use finances::ui::screens::installments::{InstallmentForm, InstallmentFormMode};
 
 fn make_accounts() -> Vec<Account> {
@@ -53,18 +54,21 @@ fn make_categories() -> Vec<Category> {
         Category {
             id: 100,
             name: "Food".into(),
+            name_pt: None,
             category_type: "expense".into(),
             created_at: Utc::now(),
         },
         Category {
             id: 200,
             name: "Salary".into(),
+            name_pt: None,
             category_type: "income".into(),
             created_at: Utc::now(),
         },
         Category {
             id: 300,
             name: "Transport".into(),
+            name_pt: None,
             category_type: "expense".into(),
             created_at: Utc::now(),
         },
@@ -90,7 +94,7 @@ fn new_edit_prefills_all_fields() {
     let categories = make_categories();
     let ip = make_purchase();
 
-    let form = InstallmentForm::new_edit(&ip, &accounts, &categories);
+    let form = InstallmentForm::new_edit(&ip, &accounts, &categories, Locale::default());
 
     assert_eq!(form.description.value, "Laptop Stand");
     assert_eq!(form.total_amount.value, "600");
@@ -108,7 +112,7 @@ fn new_edit_finds_correct_account_idx() {
     let categories = make_categories();
     let ip = make_purchase(); // account_id=3 (PicPay)
 
-    let form = InstallmentForm::new_edit(&ip, &accounts, &categories);
+    let form = InstallmentForm::new_edit(&ip, &accounts, &categories, Locale::default());
 
     // Credit accounts: [Nubank(id=2), PicPay(id=3)] → PicPay is index 1
     assert_eq!(form.account_idx, 1);
@@ -120,7 +124,7 @@ fn new_edit_finds_correct_category_idx() {
     let categories = make_categories();
     let ip = make_purchase(); // category_id=300 (Transport)
 
-    let form = InstallmentForm::new_edit(&ip, &accounts, &categories);
+    let form = InstallmentForm::new_edit(&ip, &accounts, &categories, Locale::default());
 
     // Expense categories: [Food(id=100), Transport(id=300)] → Transport is index 1
     assert_eq!(form.category_idx, 1);
@@ -133,7 +137,7 @@ fn new_edit_falls_back_to_zero_for_missing_account() {
     let mut ip = make_purchase();
     ip.account_id = 999; // nonexistent
 
-    let form = InstallmentForm::new_edit(&ip, &accounts, &categories);
+    let form = InstallmentForm::new_edit(&ip, &accounts, &categories, Locale::default());
     assert_eq!(form.account_idx, 0);
 }
 
@@ -144,7 +148,7 @@ fn new_edit_falls_back_to_zero_for_missing_category() {
     let mut ip = make_purchase();
     ip.category_id = 999; // nonexistent
 
-    let form = InstallmentForm::new_edit(&ip, &accounts, &categories);
+    let form = InstallmentForm::new_edit(&ip, &accounts, &categories, Locale::default());
     assert_eq!(form.category_idx, 0);
 }
 
@@ -154,8 +158,8 @@ fn validate_edit_form_succeeds() {
     let categories = make_categories();
     let ip = make_purchase();
 
-    let form = InstallmentForm::new_edit(&ip, &accounts, &categories);
-    let result = form.validate(&accounts, &categories);
+    let form = InstallmentForm::new_edit(&ip, &accounts, &categories, Locale::default());
+    let result = form.validate(&accounts, &categories, Locale::default());
 
     assert!(result.is_ok());
     let v = result.unwrap();
@@ -172,10 +176,10 @@ fn validate_edit_rejects_empty_description() {
     let categories = make_categories();
     let ip = make_purchase();
 
-    let mut form = InstallmentForm::new_edit(&ip, &accounts, &categories);
+    let mut form = InstallmentForm::new_edit(&ip, &accounts, &categories, Locale::default());
     form.description.value = "   ".into();
 
-    let result = form.validate(&accounts, &categories);
+    let result = form.validate(&accounts, &categories, Locale::default());
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), "Description is required");
 }
@@ -186,10 +190,10 @@ fn validate_edit_rejects_single_installment() {
     let categories = make_categories();
     let ip = make_purchase();
 
-    let mut form = InstallmentForm::new_edit(&ip, &accounts, &categories);
+    let mut form = InstallmentForm::new_edit(&ip, &accounts, &categories, Locale::default());
     form.installment_count.value = "1".into();
 
-    let result = form.validate(&accounts, &categories);
+    let result = form.validate(&accounts, &categories, Locale::default());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("at least 2"));
 }

@@ -6,6 +6,7 @@ use crossterm::event::KeyCode;
 use rust_decimal_macros::dec;
 
 use finances::models::*;
+use finances::ui::i18n::Locale;
 use finances::ui::screens::transactions::{TransactionFilter, cycle_option};
 
 // ── cycle_option (forward — Right key) ──────────────────────────
@@ -105,12 +106,14 @@ fn make_categories() -> Vec<Category> {
         Category {
             id: 100,
             name: "Food".into(),
+            name_pt: None,
             category_type: "expense".into(),
             created_at: Utc::now(),
         },
         Category {
             id: 200,
             name: "Salary".into(),
+            name_pt: None,
             category_type: "income".into(),
             created_at: Utc::now(),
         },
@@ -119,7 +122,7 @@ fn make_categories() -> Vec<Category> {
 
 #[test]
 fn to_params_empty_filter_returns_defaults() {
-    let filter = TransactionFilter::new();
+    let filter = TransactionFilter::new(Locale::default());
     let params = filter.to_params(&make_accounts(), &make_categories());
 
     assert!(params.date_from.is_none());
@@ -133,7 +136,7 @@ fn to_params_empty_filter_returns_defaults() {
 
 #[test]
 fn to_params_valid_dates_parsed() {
-    let mut filter = TransactionFilter::new();
+    let mut filter = TransactionFilter::new(Locale::default());
     filter.date_from.value = "01-03-2026".into();
     filter.date_to.value = "31-03-2026".into();
 
@@ -151,7 +154,7 @@ fn to_params_valid_dates_parsed() {
 
 #[test]
 fn to_params_invalid_date_becomes_none() {
-    let mut filter = TransactionFilter::new();
+    let mut filter = TransactionFilter::new(Locale::default());
     filter.date_from.value = "not-a-date".into();
     filter.date_to.value = "32-13-2026".into();
 
@@ -163,7 +166,7 @@ fn to_params_invalid_date_becomes_none() {
 
 #[test]
 fn to_params_description_trimmed_or_none() {
-    let mut filter = TransactionFilter::new();
+    let mut filter = TransactionFilter::new(Locale::default());
     filter.description.value = "   ".into();
     let params = filter.to_params(&[], &[]);
     assert!(params.description.is_none());
@@ -176,7 +179,7 @@ fn to_params_description_trimmed_or_none() {
 #[test]
 fn to_params_account_idx_maps_to_id() {
     let accounts = make_accounts();
-    let mut filter = TransactionFilter::new();
+    let mut filter = TransactionFilter::new(Locale::default());
 
     filter.account_idx = Some(0);
     let params = filter.to_params(&accounts, &[]);
@@ -190,7 +193,7 @@ fn to_params_account_idx_maps_to_id() {
 #[test]
 fn to_params_account_idx_out_of_bounds_becomes_none() {
     let accounts = make_accounts();
-    let mut filter = TransactionFilter::new();
+    let mut filter = TransactionFilter::new(Locale::default());
     filter.account_idx = Some(99);
 
     let params = filter.to_params(&accounts, &[]);
@@ -200,7 +203,7 @@ fn to_params_account_idx_out_of_bounds_becomes_none() {
 #[test]
 fn to_params_category_idx_maps_to_id() {
     let categories = make_categories();
-    let mut filter = TransactionFilter::new();
+    let mut filter = TransactionFilter::new(Locale::default());
 
     filter.category_idx = Some(1);
     let params = filter.to_params(&[], &categories);
@@ -209,7 +212,7 @@ fn to_params_category_idx_maps_to_id() {
 
 #[test]
 fn to_params_transaction_type_idx_maps_correctly() {
-    let mut filter = TransactionFilter::new();
+    let mut filter = TransactionFilter::new(Locale::default());
 
     filter.transaction_type_idx = Some(0);
     let params = filter.to_params(&[], &[]);
@@ -222,7 +225,7 @@ fn to_params_transaction_type_idx_maps_correctly() {
 
 #[test]
 fn to_params_payment_method_idx_maps_correctly() {
-    let mut filter = TransactionFilter::new();
+    let mut filter = TransactionFilter::new(Locale::default());
 
     filter.payment_method_idx = Some(0);
     let params = filter.to_params(&[], &[]);
@@ -239,7 +242,7 @@ fn to_params_payment_method_idx_maps_correctly() {
 
 #[test]
 fn to_params_payment_method_out_of_bounds_becomes_none() {
-    let mut filter = TransactionFilter::new();
+    let mut filter = TransactionFilter::new(Locale::default());
     filter.payment_method_idx = Some(99);
 
     let params = filter.to_params(&[], &[]);

@@ -5,6 +5,7 @@ use chrono::Utc;
 use rust_decimal_macros::dec;
 
 use finances::models::*;
+use finances::ui::i18n::Locale;
 use finances::ui::screens::transactions::TransactionForm;
 
 fn make_accounts() -> Vec<Account> {
@@ -27,12 +28,14 @@ fn make_categories() -> Vec<Category> {
         Category {
             id: 100,
             name: "Food".into(),
+            name_pt: None,
             category_type: "expense".into(),
             created_at: Utc::now(),
         },
         Category {
             id: 200,
             name: "Salary".into(),
+            name_pt: None,
             category_type: "income".into(),
             created_at: Utc::now(),
         },
@@ -40,7 +43,7 @@ fn make_categories() -> Vec<Category> {
 }
 
 fn valid_form() -> TransactionForm {
-    let mut form = TransactionForm::new_create();
+    let mut form = TransactionForm::new_create(Locale::default());
     form.date.value = "15-03-2026".into();
     form.description.value = "Supermarket".into();
     form.amount.value = "99,90".into();
@@ -59,7 +62,7 @@ fn validate_valid_form_succeeds() {
     let accounts = make_accounts();
     let categories = make_categories();
 
-    let result = form.validate(&accounts, &categories);
+    let result = form.validate(&accounts, &categories, Locale::default());
     assert!(result.is_ok());
 
     let v = result.unwrap();
@@ -78,7 +81,7 @@ fn validate_bad_date_rejected() {
     let mut form = valid_form();
     form.date.value = "not-a-date".into();
 
-    let result = form.validate(&make_accounts(), &make_categories());
+    let result = form.validate(&make_accounts(), &make_categories(), Locale::default());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("date"));
 }
@@ -88,7 +91,7 @@ fn validate_empty_description_rejected() {
     let mut form = valid_form();
     form.description.value = "   ".into();
 
-    let result = form.validate(&make_accounts(), &make_categories());
+    let result = form.validate(&make_accounts(), &make_categories(), Locale::default());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("Description"));
 }
@@ -98,7 +101,7 @@ fn validate_zero_amount_rejected() {
     let mut form = valid_form();
     form.amount.value = "0".into();
 
-    let result = form.validate(&make_accounts(), &make_categories());
+    let result = form.validate(&make_accounts(), &make_categories(), Locale::default());
     assert!(result.is_err());
 }
 
@@ -107,7 +110,7 @@ fn validate_negative_amount_rejected() {
     let mut form = valid_form();
     form.amount.value = "-50".into();
 
-    let result = form.validate(&make_accounts(), &make_categories());
+    let result = form.validate(&make_accounts(), &make_categories(), Locale::default());
     assert!(result.is_err());
 }
 
@@ -116,7 +119,7 @@ fn validate_garbage_amount_rejected() {
     let mut form = valid_form();
     form.amount.value = "abc".into();
 
-    let result = form.validate(&make_accounts(), &make_categories());
+    let result = form.validate(&make_accounts(), &make_categories(), Locale::default());
     assert!(result.is_err());
 }
 
@@ -124,7 +127,7 @@ fn validate_garbage_amount_rejected() {
 fn validate_no_accounts_rejected() {
     let form = valid_form();
 
-    let result = form.validate(&[], &make_categories());
+    let result = form.validate(&[], &make_categories(), Locale::default());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("account"));
 }
@@ -135,7 +138,7 @@ fn validate_no_matching_category_rejected() {
     form.transaction_type = TransactionType::Income;
     form.category_idx = 99; // out of bounds for income categories
 
-    let result = form.validate(&make_accounts(), &make_categories());
+    let result = form.validate(&make_accounts(), &make_categories(), Locale::default());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("category"));
 }
@@ -149,7 +152,7 @@ fn validate_comma_amount_accepted() {
     // The user types "1234,56" (no thousands separator in input)
     form.amount.value = "1234,56".into();
 
-    let result = form.validate(&make_accounts(), &make_categories());
+    let result = form.validate(&make_accounts(), &make_categories(), Locale::default());
     assert!(result.is_ok());
     assert_eq!(result.unwrap().amount, dec!(1234.56));
 }
@@ -160,7 +163,7 @@ fn validate_income_uses_income_categories() {
     form.transaction_type = TransactionType::Income;
     form.category_idx = 0; // first income category = Salary (id: 200)
 
-    let result = form.validate(&make_accounts(), &make_categories());
+    let result = form.validate(&make_accounts(), &make_categories(), Locale::default());
     assert!(result.is_ok());
     assert_eq!(result.unwrap().category_id, 200);
 }
@@ -170,7 +173,7 @@ fn validate_payment_method_out_of_bounds_rejected() {
     let mut form = valid_form();
     form.payment_method_idx = 99;
 
-    let result = form.validate(&make_accounts(), &make_categories());
+    let result = form.validate(&make_accounts(), &make_categories(), Locale::default());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("payment method"));
 }

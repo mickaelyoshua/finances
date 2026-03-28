@@ -113,13 +113,13 @@ async fn make_txn(
 }
 
 async fn make_expense_category(pool: &PgPool, name: &str) -> Category {
-    categories::create_category(pool, name, CategoryType::Expense)
+    categories::create_category(pool, name, None, CategoryType::Expense)
         .await
         .unwrap()
 }
 
 async fn make_income_category(pool: &PgPool, name: &str) -> Category {
-    categories::create_category(pool, name, CategoryType::Income)
+    categories::create_category(pool, name, None, CategoryType::Income)
         .await
         .unwrap()
 }
@@ -256,12 +256,70 @@ async fn update_category_changes_fields() {
     let (_guard, pool) = setup().await;
     let cat = make_expense_category(&pool, "Food").await;
 
-    categories::update_category(&pool, cat.id, "Groceries", CategoryType::Expense)
+    categories::update_category(&pool, cat.id, "Groceries", None, CategoryType::Expense)
         .await
         .unwrap();
 
     let list = categories::list_categories(&pool).await.unwrap();
     assert_eq!(list[0].name, "Groceries");
+}
+
+#[tokio::test]
+async fn create_category_with_name_pt() {
+    let (_guard, pool) = setup().await;
+    let cat =
+        categories::create_category(&pool, "Food", Some("Alimentação"), CategoryType::Expense)
+            .await
+            .unwrap();
+
+    assert_eq!(cat.name, "Food");
+    assert_eq!(cat.name_pt.as_deref(), Some("Alimentação"));
+}
+
+#[tokio::test]
+async fn create_category_without_name_pt() {
+    let (_guard, pool) = setup().await;
+    let cat = categories::create_category(&pool, "Food", None, CategoryType::Expense)
+        .await
+        .unwrap();
+
+    assert_eq!(cat.name_pt, None);
+}
+
+#[tokio::test]
+async fn update_category_sets_name_pt() {
+    let (_guard, pool) = setup().await;
+    let cat = make_expense_category(&pool, "Food").await;
+    assert_eq!(cat.name_pt, None);
+
+    categories::update_category(
+        &pool,
+        cat.id,
+        "Food",
+        Some("Alimentação"),
+        CategoryType::Expense,
+    )
+    .await
+    .unwrap();
+
+    let list = categories::list_categories(&pool).await.unwrap();
+    assert_eq!(list[0].name_pt.as_deref(), Some("Alimentação"));
+}
+
+#[tokio::test]
+async fn update_category_clears_name_pt() {
+    let (_guard, pool) = setup().await;
+    let cat =
+        categories::create_category(&pool, "Food", Some("Alimentação"), CategoryType::Expense)
+            .await
+            .unwrap();
+
+    categories::update_category(&pool, cat.id, "Food", None, CategoryType::Expense)
+        .await
+        .unwrap();
+
+    let list = categories::list_categories(&pool).await.unwrap();
+    assert_eq!(list[0].name_pt, None);
 }
 
 #[tokio::test]

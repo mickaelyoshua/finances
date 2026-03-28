@@ -316,12 +316,14 @@ fn export_categories_headers_and_data() {
         Category {
             id: 1,
             name: "Food".into(),
+            name_pt: None,
             category_type: "expense".into(),
             created_at: Utc::now(),
         },
         Category {
             id: 2,
             name: "Salary".into(),
+            name_pt: None,
             category_type: "income".into(),
             created_at: Utc::now(),
         },
