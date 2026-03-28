@@ -7,6 +7,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
+use crate::ui::i18n::{Locale, t};
+
 pub struct ConfirmPopup {
     pub message: String,
     pub confirmed: bool, // true = Yes highlighted, false = No highlighted
@@ -32,7 +34,7 @@ impl ConfirmPopup {
         }
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, locale: Locale) {
         let popup_area = centered_rect(40, 5, area);
 
         let yes_style = if self.confirmed {
@@ -57,15 +59,15 @@ impl ConfirmPopup {
             Line::from(""),
             Line::from(vec![
                 Span::raw("   "),
-                Span::styled(" Yes ", yes_style),
+                Span::styled(format!(" {} ", t(locale, "misc.yes")), yes_style),
                 Span::raw("  "),
-                Span::styled(" No ", no_style),
+                Span::styled(format!(" {} ", t(locale, "misc.no")), no_style),
             ]),
         ];
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title("Confirm")
+            .title(t(locale, "title.confirm"))
             .border_style(Style::new().fg(Color::Yellow));
 
         frame.render_widget(Clear, popup_area);

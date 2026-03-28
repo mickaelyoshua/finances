@@ -1,10 +1,12 @@
 use rust_decimal::Decimal;
 
+use crate::ui::i18n::{Locale, t};
+
 /// Parse a BRL-friendly amount string.
 /// Accepts both `1234,56` (comma decimal) and `1.234,56` (dot thousands + comma decimal).
 /// If the input contains a comma, any dots are treated as thousands separators and stripped.
 /// Returns error if the value is not a positive number.
-pub fn parse_positive_amount(input: &str) -> Result<Decimal, String> {
+pub fn parse_positive_amount(input: &str, locale: Locale) -> Result<Decimal, String> {
     let trimmed = input.trim();
     let normalized = if trimmed.contains(',') {
         // BRL-style: dots are thousands separators, comma is decimal
@@ -14,12 +16,12 @@ pub fn parse_positive_amount(input: &str) -> Result<Decimal, String> {
     };
     normalized
         .parse::<Decimal>()
-        .map_err(|_| "Invalid amount".to_string())
+        .map_err(|_| t(locale, "err.invalid_amount").to_string())
         .and_then(|v| {
             if v > Decimal::ZERO {
                 Ok(v)
             } else {
-                Err("Amount must be positive".into())
+                Err(t(locale, "err.amount_positive").to_string())
             }
         })
 }

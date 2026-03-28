@@ -24,6 +24,7 @@ use crate::{
             popup::ConfirmPopup,
             toggle::{push_form_error, render_selector, render_toggle},
         },
+        i18n::{Locale, t},
     },
 };
 
@@ -94,24 +95,25 @@ impl RecurringForm {
         &self,
         accounts: &[Account],
         categories: &[Category],
+        locale: Locale,
     ) -> Result<ValidatedRecurring, String> {
         let description = self.description.value.trim().to_string();
         if description.is_empty() {
-            return Err("Description is required".into());
+            return Err(t(locale, "err.description_required").into());
         }
 
-        let amount = parse_positive_amount(&self.amount.value)?;
+        let amount = parse_positive_amount(&self.amount.value, locale)?;
 
         let account = accounts
             .get(self.account_idx)
-            .ok_or("No account selected")?;
+            .ok_or(t(locale, "err.no_account"))?;
         let account_id = account.id;
 
         let methods = account.allowed_payment_methods();
         let payment_method = methods
             .get(self.payment_method_idx)
             .copied()
-            .ok_or("No payment method selected")?;
+            .ok_or(t(locale, "err.no_payment_method"))?;
 
         let transaction_type = self.transaction_type;
         let filtered_categories: Vec<&Category> = categories
@@ -121,15 +123,15 @@ impl RecurringForm {
         let category_id = filtered_categories
             .get(self.category_idx)
             .map(|c| c.id)
-            .ok_or("No category selected")?;
+            .ok_or(t(locale, "err.no_category"))?;
 
         let frequency = FREQUENCIES
             .get(self.frequency_idx)
             .copied()
-            .ok_or("No frequency selected")?;
+            .ok_or(t(locale, "err.no_frequency"))?;
 
         let next_due = NaiveDate::parse_from_str(self.next_due.value.trim(), "%d-%m-%Y")
-            .map_err(|_| "Invalid date (use DD-MM-YYYY)".to_string())?;
+            .map_err(|_| t(locale, "err.invalid_date").to_string())?;
 
         Ok(ValidatedRecurring {
             description,
@@ -143,18 +145,18 @@ impl RecurringForm {
         })
     }
 
-    pub fn new_create() -> Self {
+    pub fn new_create(locale: Locale) -> Self {
         let today = Local::now().date_naive();
         Self {
             mode: RecurringFormMode::Create,
-            description: InputField::new("Description"),
-            amount: InputField::new("Amount"),
+            description: InputField::new(t(locale, "form.description")),
+            amount: InputField::new(t(locale, "form.amount")),
             transaction_type: TransactionType::Expense,
             account_idx: 0,
             payment_method_idx: 0,
             category_idx: 0,
             frequency_idx: 2, // default to Monthly
-            next_due: InputField::new("Next Due").with_value(today.format("%d-%m-%Y").to_string()),
+            next_due: InputField::new(t(locale, "form.next_due")).with_value(today.format("%d-%m-%Y").to_string()),
             active_field: 0,
             error: None,
         }
@@ -164,6 +166,7 @@ impl RecurringForm {
         r: &RecurringTransaction,
         accounts: &[Account],
         categories: &[Category],
+        locale: Locale,
     ) -> Self {
         let txn_type = r.parsed_type();
 
@@ -198,14 +201,14 @@ impl RecurringForm {
 
         Self {
             mode: RecurringFormMode::Edit(r.id),
-            description: InputField::new("Description").with_value(&r.description),
-            amount: InputField::new("Amount").with_value(r.amount.to_string()),
+            description: InputField::new(t(locale, "form.description")).with_value(&r.description),
+            amount: InputField::new(t(locale, "form.amount")).with_value(r.amount.to_string()),
             transaction_type: txn_type,
             account_idx,
             payment_method_idx,
             category_idx,
             frequency_idx,
-            next_due: InputField::new("Next Due")
+            next_due: InputField::new(t(locale, "form.next_due"))
                 .with_value(r.next_due.format("%d-%m-%Y").to_string()),
             active_field: 0,
             error: None,
@@ -232,12 +235,12 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let today = Local::now().date_naive();
 
     let header = Row::new([
-        "Description",
-        "Amount",
-        "Frequency",
-        "Next Due",
-        "Account",
-        "Category",
+        t(app.locale, "header.description"),
+        t(app.locale, "header.amount"),
+        t(app.locale, "header.frequency"),
+        t(app.locale, "header.next_due"),
+        t(app.locale, "header.account"),
+        t(app.locale, "header.category"),
     ])
     .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
@@ -246,7 +249,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .map(|r| {
             let account_name = app.account_name(r.account_id);
-            let category_name = app.category_name(r.category_id);
+            let category_name = app.category_name_localized(r.category_id);
 
             let due_style = if r.next_due <= today {
                 Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)
@@ -257,7 +260,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             Row::new([
                 r.description.clone(),
                 format_brl(r.amount),
-                r.parsed_frequency().label().to_string(),
+                app.locale.enum_label(r.parsed_frequency().label()).to_string(),
                 r.next_due.format("%d-%m-%Y").to_string(),
                 account_name.to_string(),
                 category_name.to_string(),
@@ -281,7 +284,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Recurring Transactions"),
+            .title(t(app.locale, "title.recurring")),
     )
     .row_highlight_style(
         Style::new()
@@ -298,12 +301,12 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     {
         Some(r) => {
             let account_name = app.account_name(r.account_id);
-            let category_name = app.category_name(r.category_id);
+            let category_name = app.category_name_localized(r.category_id);
 
             let pending = if r.next_due <= today {
-                " (PENDING)"
+                format!(" {}", t(app.locale, "misc.pending"))
             } else {
-                ""
+                String::new()
             };
 
             vec![
@@ -312,30 +315,33 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     r.description, account_name, category_name,
                 )),
                 Line::from(format!(
-                    " {} | {} | {} | Next: {}{}",
-                    r.parsed_type().label(),
-                    r.parsed_payment_method().label(),
-                    r.parsed_frequency().label(),
+                    " {} | {} | {} | {}: {}{}",
+                    app.locale.enum_label(r.parsed_type().label()),
+                    app.locale.enum_label(r.parsed_payment_method().label()),
+                    app.locale.enum_label(r.parsed_frequency().label()),
+                    t(app.locale, "detail.next"),
                     r.next_due.format("%d-%m-%Y"),
                     pending,
                 )),
                 Line::from(format!(
-                    " Amount: {} | Created: {}",
+                    " {}: {} | {}: {}",
+                    t(app.locale, "detail.amount"),
                     format_brl(r.amount),
+                    t(app.locale, "detail.created"),
                     r.created_at.format("%d-%m-%Y %H:%M"),
                 )),
                 Line::from(Span::styled(
-                    " [c] Confirm pending  [n] New  [e] Edit  [d] Deactivate  [x] Export",
+                    format!(" {}", t(app.locale, "hint.recurring")),
                     Style::new().fg(Color::DarkGray),
                 )),
             ]
         }
-        None => vec![Line::from(" No recurring transaction selected.")],
+        None => vec![Line::from(format!(" {}", t(app.locale, "misc.no_sel.recurring")))],
     };
 
     let detail_block = Block::default()
         .borders(Borders::ALL)
-        .title("Recurring Details");
+        .title(t(app.locale, "title.recurring_details"));
     let detail = Paragraph::new(detail_content).block(detail_block);
     frame.render_widget(detail, detail_area);
 }
@@ -344,8 +350,8 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
     let form = app.recur.form.as_ref().unwrap();
 
     let title = match form.mode {
-        RecurringFormMode::Create => "New Recurring Transaction",
-        RecurringFormMode::Edit(_) => "Edit Recurring Transaction",
+        RecurringFormMode::Create => t(app.locale, "title.new_recurring"),
+        RecurringFormMode::Edit(_) => t(app.locale, "title.edit_recurring"),
     };
 
     let mut lines: Vec<Line> = Vec::new();
@@ -356,8 +362,8 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
             RecurringField::Description => form.description.render_line(active),
             RecurringField::Amount => form.amount.render_line(active),
             RecurringField::TransactionType => render_toggle(
-                "Type",
-                &["Expense", "Income"],
+                t(app.locale, "form.type"),
+                &[app.locale.enum_label("Expense"), app.locale.enum_label("Income")],
                 if form.transaction_type == TransactionType::Expense {
                     0
                 } else {
@@ -367,7 +373,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
             ),
             RecurringField::Account => {
                 let names: Vec<&str> = app.accounts.iter().map(|a| a.name.as_str()).collect();
-                render_selector("Account", &names, form.account_idx, active, "no accounts")
+                render_selector(t(app.locale, "form.account"), &names, form.account_idx, active, t(app.locale, "misc.no_accounts"))
             }
             RecurringField::PaymentMethod => {
                 let methods: Vec<&str> = app
@@ -376,11 +382,11 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .map(|a| {
                         a.allowed_payment_methods()
                             .iter()
-                            .map(|m| m.label())
+                            .map(|m| app.locale.enum_label(m.label()))
                             .collect()
                     })
                     .unwrap_or_default();
-                render_selector("Payment", &methods, form.payment_method_idx, active, "none")
+                render_selector(t(app.locale, "form.payment"), &methods, form.payment_method_idx, active, t(app.locale, "misc.none"))
             }
             RecurringField::Category => {
                 let filtered: Vec<&str> = app
@@ -389,11 +395,11 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .filter(|c| c.parsed_type() == form.transaction_type.category_type())
                     .map(|c| c.name.as_str())
                     .collect();
-                render_selector("Category", &filtered, form.category_idx, active, "none")
+                render_selector(t(app.locale, "form.category"), &filtered, form.category_idx, active, t(app.locale, "misc.none"))
             }
             RecurringField::Frequency => {
-                let labels: Vec<&str> = FREQUENCIES.iter().map(|f| f.label()).collect();
-                render_toggle("Frequency", &labels, form.frequency_idx, active)
+                let labels: Vec<&str> = FREQUENCIES.iter().map(|f| app.locale.enum_label(f.label())).collect();
+                render_toggle(t(app.locale, "form.frequency"), &labels, form.frequency_idx, active)
             }
             RecurringField::NextDue => form.next_due.render_line(active),
         };
@@ -427,11 +433,11 @@ impl App {
             }
             KeyCode::Char('n') => {
                 if self.accounts.is_empty() {
-                    self.status_message = Some(StatusMessage::error("Create an account first"));
+                    self.status_message = Some(StatusMessage::error(t(self.locale, "msg.create_account_first")));
                 } else if self.categories.is_empty() {
-                    self.status_message = Some(StatusMessage::error("Create a category first"));
+                    self.status_message = Some(StatusMessage::error(t(self.locale, "msg.create_category_first")));
                 } else {
-                    self.recur.form = Some(RecurringForm::new_create());
+                    self.recur.form = Some(RecurringForm::new_create(self.locale));
                     self.input_mode = InputMode::Editing;
                 }
             }
@@ -446,6 +452,7 @@ impl App {
                         &r,
                         &self.accounts,
                         &self.categories,
+                        self.locale,
                     ));
                     self.input_mode = InputMode::Editing;
                 }
@@ -459,8 +466,9 @@ impl App {
                     let r_id = r.id;
                     let r_desc = r.description.clone();
                     self.confirm_action = Some(ConfirmAction::DeactivateRecurring(r_id));
-                    self.confirm_popup =
-                        Some(ConfirmPopup::new(format!("Deactivate \"{}\"?", r_desc)));
+                    self.confirm_popup = Some(ConfirmPopup::new(
+                        crate::ui::i18n::tf_deactivate(self.locale, &r_desc, false)
+                    ));
                 }
             }
             KeyCode::Char('c') => {
@@ -480,15 +488,14 @@ impl App {
                     },
                 ) {
                     Ok(path) => {
-                        self.status_message = Some(StatusMessage::info(format!(
-                            "Exported {} recurring transactions to {}",
-                            self.recur.list.len(),
-                            path.display()
-                        )));
+                        self.status_message = Some(StatusMessage::info(
+                            crate::ui::i18n::tf_exported(self.locale, self.recur.list.len(), t(self.locale, "export.recurring"), &path)
+                        ));
                     }
                     Err(e) => {
-                        self.status_message =
-                            Some(StatusMessage::error(format!("Export failed: {e}")));
+                        self.status_message = Some(StatusMessage::error(
+                            crate::ui::i18n::tf_export_failed(self.locale, &e)
+                        ));
                     }
                 }
             }
@@ -562,7 +569,7 @@ impl App {
         use crate::db::recurring;
 
         let form = self.recur.form.as_ref().unwrap();
-        let validated = match form.validate(&self.accounts, &self.categories) {
+        let validated = match form.validate(&self.accounts, &self.categories, self.locale) {
             Ok(v) => v,
             Err(e) => {
                 self.recur.form.as_mut().unwrap().error = Some(e);
@@ -613,10 +620,9 @@ impl App {
         };
 
         if r.next_due > today {
-            self.status_message = Some(StatusMessage::error(format!(
-                "Not due yet (next due: {})",
-                r.next_due.format("%d-%m-%Y")
-            )));
+            self.status_message = Some(StatusMessage::error(
+                crate::ui::i18n::tf_not_due_yet(self.locale, &r.next_due.format("%d-%m-%Y").to_string())
+            ));
             return Ok(());
         }
 
@@ -657,11 +663,9 @@ impl App {
         self.load_transactions().await?;
         self.refresh_balances().await?;
         self.refresh_budgets().await?;
-        self.status_message = Some(StatusMessage::info(format!(
-            "Confirmed \"{}\" — next due: {}",
-            r.description,
-            new_next_due.format("%d-%m-%Y")
-        )));
+        self.status_message = Some(StatusMessage::info(
+            crate::ui::i18n::tf_confirmed(self.locale, &r.description, &new_next_due.format("%d-%m-%Y").to_string())
+        ));
         Ok(())
     }
 

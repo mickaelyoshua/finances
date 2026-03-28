@@ -27,6 +27,7 @@ use crate::{
         App,
         app::{InputMode, Screen, StatusMessage, clamp_selection, cycle_index, move_table_selection},
         components::format::format_brl,
+        i18n::t,
         screens::transactions::TransactionForm,
     },
 };
@@ -371,12 +372,12 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let selector_text = if cc_accounts.is_empty() {
         Line::from(Span::styled(
-            " No credit card accounts",
+            format!(" {}", t(app.locale, "misc.no_cc_accts")),
             Style::new().fg(Color::DarkGray),
         ))
     } else {
         let display_name = if app.cc_stmt.account_idx == 0 {
-            "All Accounts"
+            t(app.locale, "stmt.all_accounts")
         } else {
             cc_accounts
                 .get(app.cc_stmt.account_idx - 1)
@@ -402,8 +403,13 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(Paragraph::new(selector_text), selector_area);
 
     // Statement table
-    let header = Row::new(["Period", "Total", "Balance", "Status"])
-        .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let header = Row::new([
+        t(app.locale, "header.date"),
+        t(app.locale, "header.total"),
+        t(app.locale, "header.balance"),
+        t(app.locale, "header.status"),
+    ])
+    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .cc_stmt.items
@@ -423,21 +429,21 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 ),
                 format_brl(s.statement_total),
                 format_brl(s.balance_due()),
-                s.status_label().to_string(),
+                app.locale.enum_label(s.status_label()).to_string(),
             ])
             .style(status_style)
         })
         .collect();
 
     let title = if cc_accounts.is_empty() {
-        "CC Statements".to_string()
+        t(app.locale, "title.cc_statements").to_string()
     } else if app.cc_stmt.account_idx == 0 {
-        "CC Statements — All Accounts".to_string()
+        format!("{} — {}", t(app.locale, "title.cc_statements"), t(app.locale, "stmt.all_accounts"))
     } else {
         let name = cc_accounts
             .get(app.cc_stmt.account_idx - 1)
             .unwrap_or(&"?");
-        format!("CC Statements — {}", name)
+        format!("{} — {}", t(app.locale, "title.cc_statements"), name)
     };
 
     let table = Table::new(
@@ -468,36 +474,37 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         Some(s) => {
             vec![
                 Line::from(format!(
-                    " {} | {} - {} | Due: {}",
+                    " {} | {} - {} | {}: {}",
                     s.label(),
                     s.period_start.format("%d/%m/%Y"),
                     s.period_end.format("%d/%m/%Y"),
+                    t(app.locale, "detail.due"),
                     s.due_date.format("%d/%m/%Y"),
                 )),
                 Line::from(format!(
-                    " Charges: {}  Credits: {}  Total: {}  Paid: {}  Balance: {}",
-                    format_brl(s.total_charges),
-                    format_brl(s.total_credits),
-                    format_brl(s.statement_total),
-                    format_brl(s.paid_amount),
-                    format_brl(s.balance_due()),
+                    " {}: {}  {}: {}  {}: {}  {}: {}  {}: {}",
+                    t(app.locale, "detail.charges"), format_brl(s.total_charges),
+                    t(app.locale, "detail.credits"), format_brl(s.total_credits),
+                    t(app.locale, "detail.total"), format_brl(s.statement_total),
+                    t(app.locale, "detail.paid"), format_brl(s.paid_amount),
+                    t(app.locale, "detail.balance"), format_brl(s.balance_due()),
                 )),
                 Line::from(Span::styled(
                     if app.cc_stmt.account_idx == 0 {
-                        " [h/l] Switch account"
+                        format!(" {}", t(app.locale, "hint.cc_stmt_list_all"))
                     } else {
-                        " [Enter] View transactions  [p] Pay  [u] Unpay  [h/l] Switch account"
+                        format!(" {}", t(app.locale, "hint.cc_stmt_list"))
                     },
                     Style::new().fg(Color::DarkGray),
                 )),
             ]
         }
-        None => vec![Line::from(" No statements available.")],
+        None => vec![Line::from(format!(" {}", t(app.locale, "misc.no_sel.statement")))],
     };
 
     let detail_block = Block::default()
         .borders(Borders::ALL)
-        .title("Statement Details");
+        .title(t(app.locale, "title.statement_details"));
     frame.render_widget(
         Paragraph::new(detail_content).block(detail_block),
         detail_area,
@@ -523,29 +530,29 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
                     .get(app.cc_stmt.account_idx - 1)
                     .unwrap_or(&"?")
             } else {
-                &"All Accounts"
+                t(app.locale, "stmt.all_accounts")
             };
             vec![Line::from(format!(
-                " {} — {} | {} - {} | Total: {} | Status: {}",
+                " {} — {} | {} - {} | {}: {} | {}: {}",
                 account_name,
                 s.label(),
                 s.period_start.format("%d/%m/%Y"),
                 s.period_end.format("%d/%m/%Y"),
-                format_brl(s.statement_total),
-                s.status_label(),
+                t(app.locale, "detail.total"), format_brl(s.statement_total),
+                t(app.locale, "detail.status"), app.locale.enum_label(s.status_label()),
             ))]
         } else {
-            vec![Line::from(" No statement selected.")]
+            vec![Line::from(format!(" {}", t(app.locale, "misc.no_stmt_selected")))]
         }
     } else {
-        vec![Line::from(" No statement selected.")]
+        vec![Line::from(format!(" {}", t(app.locale, "misc.no_stmt_selected")))]
     };
 
-    let header_block = Block::default().borders(Borders::ALL).title("Statement");
+    let header_block = Block::default().borders(Borders::ALL).title(t(app.locale, "title.statement"));
     frame.render_widget(Paragraph::new(stmt_info).block(header_block), header_area);
 
     // Transactions table
-    let table_header = Row::new(["Date", "Description", "Category", "Type", "Amount"])
+    let table_header = Row::new([t(app.locale, "header.date"), t(app.locale, "header.description"), t(app.locale, "header.category"), t(app.locale, "header.type"), t(app.locale, "header.amount")])
         .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
@@ -560,8 +567,8 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
             Row::new([
                 t.date.format("%d/%m/%Y").to_string(),
                 t.description.clone(),
-                app.category_name(t.category_id).to_string(),
-                t.parsed_type().to_string(),
+                app.category_name_localized(t.category_id).to_string(),
+                app.locale.enum_label(t.parsed_type().label()).to_string(),
                 format_brl(t.amount),
             ])
             .style(type_style)
@@ -583,7 +590,7 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title(format!("Transactions ({count})")),
+            .title(format!("{} ({count})", t(app.locale, "title.transactions"))),
     )
     .row_highlight_style(
         Style::new()
@@ -596,9 +603,9 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
     // Detail pane with key guide
     let detail_block = Block::default()
         .borders(Borders::ALL)
-        .title("Details");
+        .title(t(app.locale, "title.details"));
     let detail_content = vec![Line::from(Span::styled(
-        " [Esc] Back  [Enter] Go to transaction / installment  [j/k] Navigate",
+        format!(" {}", t(app.locale, "hint.cc_stmt_detail")),
         Style::new().fg(Color::DarkGray),
     ))];
     frame.render_widget(
@@ -642,7 +649,7 @@ impl App {
             KeyCode::Enter => {
                 if self.cc_stmt.account_idx == 0 {
                     self.status_message =
-                        Some(StatusMessage::info("Select a specific account to view transactions"));
+                        Some(StatusMessage::info(t(self.locale, "msg.select_account_view")));
                 } else if let Some(idx) = self.cc_stmt.table_state.selected()
                     && idx < self.cc_stmt.items.len()
                 {
@@ -653,7 +660,7 @@ impl App {
             KeyCode::Char('p') => {
                 if self.cc_stmt.account_idx == 0 {
                     self.status_message =
-                        Some(StatusMessage::info("Select a specific account to pay a statement"));
+                        Some(StatusMessage::info(t(self.locale, "msg.select_account_pay")));
                 } else if let Some(stmt) = self
                     .cc_stmt.table_state
                     .selected()
@@ -661,13 +668,13 @@ impl App {
                 {
                     if stmt.is_upcoming {
                         self.status_message =
-                            Some(StatusMessage::error("Cannot pay an upcoming statement"));
+                            Some(StatusMessage::error(t(self.locale, "msg.cannot_pay_upcoming")));
                     } else if stmt.is_current {
                         self.status_message =
-                            Some(StatusMessage::error("Cannot pay an open statement"));
+                            Some(StatusMessage::error(t(self.locale, "msg.cannot_pay_open")));
                     } else if stmt.balance_due() == Decimal::ZERO {
                         self.status_message =
-                            Some(StatusMessage::info("Statement already fully paid"));
+                            Some(StatusMessage::info(t(self.locale, "msg.already_paid")));
                     } else {
                         let cc_accounts: Vec<&crate::models::Account> =
                             self.accounts.iter().filter(|a| a.has_credit_card).collect();
@@ -679,10 +686,10 @@ impl App {
                                 account_id: account.id,
                                 amount: balance,
                                 date: pay_date,
-                                description: format!("Fatura {}", label),
+                                description: format!("{} {}", t(self.locale, "title.statement"), label),
                             });
                             self.confirm_popup = Some(crate::ui::components::popup::ConfirmPopup::new(
-                                format!("Pay statement {}? ({})", label, crate::ui::components::format::format_brl(balance)),
+                                crate::ui::i18n::tf_pay_statement(self.locale, &label, &crate::ui::components::format::format_brl(balance)),
                             ));
                         }
                     }
@@ -691,7 +698,7 @@ impl App {
             KeyCode::Char('u') => {
                 if self.cc_stmt.account_idx == 0 {
                     self.status_message =
-                        Some(StatusMessage::info("Select a specific account to unpay a statement"));
+                        Some(StatusMessage::info(t(self.locale, "msg.select_account_unpay")));
                 } else if let Some((idx, stmt)) = self
                     .cc_stmt.table_state
                     .selected()
@@ -699,10 +706,10 @@ impl App {
                 {
                     if stmt.is_upcoming || stmt.is_current {
                         self.status_message =
-                            Some(StatusMessage::error("Only closed statements can be unpaid"));
+                            Some(StatusMessage::error(t(self.locale, "msg.only_closed_unpay")));
                     } else if stmt.paid_amount == Decimal::ZERO {
                         self.status_message =
-                            Some(StatusMessage::info("Statement has no payments"));
+                            Some(StatusMessage::info(t(self.locale, "msg.no_payments")));
                     } else {
                         let cc_accounts: Vec<&crate::models::Account> =
                             self.accounts.iter().filter(|a| a.has_credit_card).collect();
@@ -726,7 +733,7 @@ impl App {
                                 pay_end,
                             });
                             self.confirm_popup = Some(crate::ui::components::popup::ConfirmPopup::new(
-                                format!("Remove all payments for {}? ({})", label, crate::ui::components::format::format_brl(paid)),
+                                crate::ui::i18n::tf_unpay_statement(self.locale, &label, &crate::ui::components::format::format_brl(paid)),
                             ));
                         }
                     }
@@ -772,6 +779,7 @@ impl App {
                             &txn,
                             &self.accounts,
                             &self.categories,
+                            self.locale,
                         ));
                         self.screen = Screen::Transactions;
                         self.input_mode = InputMode::Editing;
@@ -866,7 +874,7 @@ impl App {
         self.refresh_balances().await?;
         self.load_cc_statements().await?;
         self.refresh_dashboard_statements().await?;
-        self.status_message = Some(StatusMessage::info("Statement paid"));
+        self.status_message = Some(StatusMessage::info(t(self.locale, "msg.statement_paid")));
         Ok(())
     }
 
@@ -884,11 +892,9 @@ impl App {
         self.refresh_balances().await?;
         self.load_cc_statements().await?;
         self.refresh_dashboard_statements().await?;
-        self.status_message = Some(StatusMessage::info(format!(
-            "Removed {} payment{}",
-            deleted,
-            if deleted == 1 { "" } else { "s" }
-        )));
+        self.status_message = Some(StatusMessage::info(
+            crate::ui::i18n::tf_removed_payments(self.locale, deleted)
+        ));
         Ok(())
     }
 }

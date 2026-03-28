@@ -25,6 +25,7 @@ use crate::{
             popup::ConfirmPopup,
             toggle::{push_form_error, render_selector},
         },
+        i18n::{Locale, t},
     },
 };
 
@@ -90,30 +91,31 @@ impl InstallmentForm {
         &self,
         accounts: &[Account],
         categories: &[Category],
+        locale: Locale,
     ) -> Result<ValidatedInstallment, String> {
         let description = self.description.value.trim().to_string();
         if description.is_empty() {
-            return Err("Description is required".into());
+            return Err(t(locale, "err.description_required").into());
         }
 
-        let total_amount = parse_positive_amount(&self.total_amount.value)?;
+        let total_amount = parse_positive_amount(&self.total_amount.value, locale)?;
 
         let installment_count = self
             .installment_count
             .value
             .trim()
             .parse::<i16>()
-            .map_err(|_| "Invalid installment count".to_string())
+            .map_err(|_| t(locale, "err.invalid_inst_count").to_string())
             .and_then(|v| {
                 if v >= 2 {
                     Ok(v)
                 } else {
-                    Err("Must be at least 2 installments".into())
+                    Err(t(locale, "err.at_least_two_inst").into())
                 }
             })?;
 
         let first_date = NaiveDate::parse_from_str(self.first_date.value.trim(), "%d-%m-%Y")
-            .map_err(|_| "Invalid date (use DD-MM-YYYY)".to_string())?;
+            .map_err(|_| t(locale, "err.invalid_date").to_string())?;
 
         // Only accounts with credit card
         let credit_accounts: Vec<&Account> =
@@ -121,7 +123,7 @@ impl InstallmentForm {
         let account_id = credit_accounts
             .get(self.account_idx)
             .map(|a| a.id)
-            .ok_or("No account selected")?;
+            .ok_or(t(locale, "err.no_account"))?;
 
         let expense_categories: Vec<&Category> = categories
             .iter()
@@ -130,7 +132,7 @@ impl InstallmentForm {
         let category_id = expense_categories
             .get(self.category_idx)
             .map(|c| c.id)
-            .ok_or("No category selected")?;
+            .ok_or(t(locale, "err.no_category"))?;
 
         Ok(ValidatedInstallment {
             description,
@@ -142,14 +144,14 @@ impl InstallmentForm {
         })
     }
 
-    pub fn new_create() -> Self {
+    pub fn new_create(locale: Locale) -> Self {
         let today = Local::now().date_naive();
         Self {
             mode: InstallmentFormMode::Create,
-            description: InputField::new("Description"),
-            total_amount: InputField::new("Total Amount"),
-            installment_count: InputField::new("Installments"),
-            first_date: InputField::new("Purchase Date")
+            description: InputField::new(t(locale, "form.description")),
+            total_amount: InputField::new(t(locale, "form.total_amount")),
+            installment_count: InputField::new(t(locale, "form.installments")),
+            first_date: InputField::new(t(locale, "form.purchase_date"))
                 .with_value(today.format("%d-%m-%Y").to_string()),
             account_idx: 0,
             category_idx: 0,
@@ -159,7 +161,7 @@ impl InstallmentForm {
         }
     }
 
-    pub fn new_edit(ip: &InstallmentPurchase, accounts: &[Account], categories: &[Category]) -> Self {
+    pub fn new_edit(ip: &InstallmentPurchase, accounts: &[Account], categories: &[Category], locale: Locale) -> Self {
         let credit_accounts: Vec<&Account> =
             accounts.iter().filter(|a| a.has_credit_card).collect();
         let account_idx = credit_accounts
@@ -178,11 +180,11 @@ impl InstallmentForm {
 
         Self {
             mode: InstallmentFormMode::Edit(ip.id),
-            description: InputField::new("Description").with_value(&ip.description),
-            total_amount: InputField::new("Total Amount").with_value(ip.total_amount.to_string()),
-            installment_count: InputField::new("Installments")
+            description: InputField::new(t(locale, "form.description")).with_value(&ip.description),
+            total_amount: InputField::new(t(locale, "form.total_amount")).with_value(ip.total_amount.to_string()),
+            installment_count: InputField::new(t(locale, "form.installments"))
                 .with_value(ip.installment_count.to_string()),
-            first_date: InputField::new("Purchase Date")
+            first_date: InputField::new(t(locale, "form.purchase_date"))
                 .with_value(ip.first_installment_date.format("%d-%m-%Y").to_string()),
             account_idx,
             category_idx,
@@ -214,12 +216,12 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         Layout::vertical([Constraint::Min(5), Constraint::Length(7)]).areas(area);
 
     let header = Row::new([
-        "Description",
-        "Total",
-        "# Inst.",
-        "Purchase Date",
-        "Account",
-        "Category",
+        t(app.locale, "header.description"),
+        t(app.locale, "header.total"),
+        t(app.locale, "header.num_inst"),
+        t(app.locale, "header.purchase_date"),
+        t(app.locale, "header.account"),
+        t(app.locale, "header.category"),
     ])
     .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
@@ -228,7 +230,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .map(|ip| {
             let account_name = app.account_name(ip.account_id);
-            let category_name = app.category_name(ip.category_id);
+            let category_name = app.category_name_localized(ip.category_id);
 
             Row::new([
                 ip.description.clone(),
@@ -256,7 +258,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Installment Purchases"),
+            .title(t(app.locale, "title.installments")),
     )
     .row_highlight_style(
         Style::new()
@@ -273,38 +275,44 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     {
         Some(ip) => {
             let account_name = app.account_name(ip.account_id);
-            let category_name = app.category_name(ip.category_id);
+            let category_name = app.category_name_localized(ip.category_id);
 
             let per_installment = ip.total_amount / Decimal::from(ip.installment_count);
 
+            let inst_label = t(app.locale, "detail.installment").to_lowercase();
             vec![
                 Line::from(format!(
                     " {} | {} | {}",
                     ip.description, account_name, category_name,
                 )),
                 Line::from(format!(
-                    " Total: {} | ~{}/installment | {} installments",
+                    " {}: {} | ~{}/{} | {} {}",
+                    t(app.locale, "detail.total"),
                     format_brl(ip.total_amount),
                     format_brl(per_installment.round_dp(2)),
+                    inst_label,
                     ip.installment_count,
+                    inst_label,
                 )),
                 Line::from(format!(
-                    " Purchase: {} | Created: {}",
+                    " {}: {} | {}: {}",
+                    t(app.locale, "detail.purchase"),
                     ip.first_installment_date.format("%d-%m-%Y"),
+                    t(app.locale, "detail.created"),
                     ip.created_at.format("%d-%m-%Y %H:%M"),
                 )),
                 Line::from(Span::styled(
-                    " [n] New  [e] Edit  [d] Delete  [x] Export",
+                    format!(" {}", t(app.locale, "hint.inst")),
                     Style::new().fg(Color::DarkGray),
                 )),
             ]
         }
-        None => vec![Line::from(" No installment purchase selected.")],
+        None => vec![Line::from(format!(" {}", t(app.locale, "misc.no_sel.installment")))],
     };
 
     let detail_block = Block::default()
         .borders(Borders::ALL)
-        .title("Installment Details");
+        .title(t(app.locale, "title.installment_details"));
     let detail = Paragraph::new(detail_content).block(detail_block);
     frame.render_widget(detail, detail_area);
 }
@@ -313,8 +321,8 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
     let form = app.inst.form.as_ref().unwrap();
 
     let title = match form.mode {
-        InstallmentFormMode::Create => "New Installment Purchase",
-        InstallmentFormMode::Edit(_) => "Edit Installment Purchase",
+        InstallmentFormMode::Create => t(app.locale, "title.new_installment"),
+        InstallmentFormMode::Edit(_) => t(app.locale, "title.edit_installment"),
     };
 
     let mut lines: Vec<Line> = Vec::new();
@@ -336,19 +344,22 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                 if matches!(form.mode, InstallmentFormMode::Edit(_)) {
                     let name = names.get(form.account_idx).unwrap_or(&"?");
                     Line::from(vec![
-                        Span::styled(" Account: ", Style::new().fg(Color::DarkGray)),
                         Span::styled(
-                            format!("{} (locked)", name),
+                            format!(" {}: ", t(app.locale, "form.account")),
+                            Style::new().fg(Color::DarkGray),
+                        ),
+                        Span::styled(
+                            format!("{} ({})", name, t(app.locale, "misc.locked")),
                             Style::new().fg(Color::DarkGray),
                         ),
                     ])
                 } else {
                     render_selector(
-                        "Account",
+                        t(app.locale, "form.account"),
                         &names,
                         form.account_idx,
                         active,
-                        "no accounts with credit card",
+                        t(app.locale, "misc.no_accounts_cc"),
                     )
                 }
             }
@@ -360,11 +371,11 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .map(|c| c.name.as_str())
                     .collect();
                 render_selector(
-                    "Category",
+                    t(app.locale, "form.category"),
                     &names,
                     form.category_idx,
                     active,
-                    "no expense categories",
+                    t(app.locale, "misc.no_expense_cats"),
                 )
             }
         };
@@ -402,15 +413,17 @@ fn render_confirmation(frame: &mut Frame, area: Rect, app: &mut App) {
 
     for (parcela, due) in &conf.parcela_dues {
         lines.push(Line::from(format!(
-            "  Parcela {:>2} → due {}",
+            "  {} {:>2} → {} {}",
+            t(app.locale, "misc.parcela"),
             parcela,
+            t(app.locale, "misc.due"),
             due.format("%d/%m/%Y")
         )));
     }
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        " Is this correct?",
+        format!(" {}", t(app.locale, "misc.is_this_correct")),
         Style::new().fg(Color::Yellow),
     )));
     lines.push(Line::from(""));
@@ -434,14 +447,14 @@ fn render_confirmation(frame: &mut Frame, area: Rect, app: &mut App) {
 
     lines.push(Line::from(vec![
         Span::raw("   "),
-        Span::styled(" Yes ", yes_style),
+        Span::styled(format!(" {} ", t(app.locale, "misc.yes")), yes_style),
         Span::raw("  "),
-        Span::styled(" No ", no_style),
+        Span::styled(format!(" {} ", t(app.locale, "misc.no")), no_style),
     ]));
 
     let title = match form.mode {
-        InstallmentFormMode::Create => "Confirm Installment",
-        InstallmentFormMode::Edit(_) => "Confirm Installment Edit",
+        InstallmentFormMode::Create => t(app.locale, "title.confirm_installment"),
+        InstallmentFormMode::Edit(_) => t(app.locale, "title.confirm_installment_edit"),
     };
     let block = Block::default().borders(Borders::ALL).title(title);
     frame.render_widget(Paragraph::new(lines).block(block), area);
@@ -474,13 +487,13 @@ impl App {
                     .any(|c| c.parsed_type() == CategoryType::Expense);
                 if !has_credit_account {
                     self.status_message = Some(StatusMessage::error(
-                        "No account with credit card available",
+                        t(self.locale, "msg.no_cc_account"),
                     ));
                 } else if !has_expense_cat {
                     self.status_message =
-                        Some(StatusMessage::error("Create an expense category first"));
+                        Some(StatusMessage::error(t(self.locale, "msg.create_expense_cat_first")));
                 } else {
-                    self.inst.form = Some(InstallmentForm::new_create());
+                    self.inst.form = Some(InstallmentForm::new_create(self.locale));
                     self.input_mode = InputMode::Editing;
                 }
             }
@@ -492,11 +505,11 @@ impl App {
                     .any(|c| c.parsed_type() == CategoryType::Expense);
                 if !has_credit_account {
                     self.status_message = Some(StatusMessage::error(
-                        "No account with credit card available",
+                        t(self.locale, "msg.no_cc_account"),
                     ));
                 } else if !has_expense_cat {
                     self.status_message =
-                        Some(StatusMessage::error("Create an expense category first"));
+                        Some(StatusMessage::error(t(self.locale, "msg.create_expense_cat_first")));
                 } else if let Some(ip) = self
                     .inst.table_state
                     .selected()
@@ -507,6 +520,7 @@ impl App {
                         &ip,
                         &self.accounts,
                         &self.categories,
+                        self.locale,
                     ));
                     self.input_mode = InputMode::Editing;
                 }
@@ -520,10 +534,9 @@ impl App {
                     let ip_id = ip.id;
                     let ip_desc = ip.description.clone();
                     self.confirm_action = Some(ConfirmAction::DeleteInstallment(ip_id));
-                    self.confirm_popup = Some(ConfirmPopup::new(format!(
-                        "Delete \"{}\" and all its transactions?",
-                        ip_desc
-                    )));
+                    self.confirm_popup = Some(ConfirmPopup::new(
+                        crate::ui::i18n::tf_delete_installment(self.locale, &ip_desc)
+                    ));
                 }
             }
             KeyCode::Char('x') => {
@@ -540,15 +553,14 @@ impl App {
                     },
                 ) {
                     Ok(path) => {
-                        self.status_message = Some(StatusMessage::info(format!(
-                            "Exported {} installments to {}",
-                            self.inst.items.len(),
-                            path.display()
-                        )));
+                        self.status_message = Some(StatusMessage::info(
+                            crate::ui::i18n::tf_exported(self.locale, self.inst.items.len(), t(self.locale, "export.installments"), &path)
+                        ));
                     }
                     Err(e) => {
-                        self.status_message =
-                            Some(StatusMessage::error(format!("Export failed: {e}")));
+                        self.status_message = Some(StatusMessage::error(
+                            crate::ui::i18n::tf_export_failed(self.locale, &e)
+                        ));
                     }
                 }
             }
@@ -685,7 +697,7 @@ impl App {
 
         // Validate and show confirmation
         let form = self.inst.form.as_ref().unwrap();
-        let validated = match form.validate(&self.accounts, &self.categories) {
+        let validated = match form.validate(&self.accounts, &self.categories, self.locale) {
             Ok(v) => v,
             Err(e) => {
                 self.inst.form.as_mut().unwrap().error = Some(e);

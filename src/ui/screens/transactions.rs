@@ -24,6 +24,7 @@ use crate::{
             input::InputField,
             toggle::{push_form_error, render_selector, render_toggle},
         },
+        i18n::{Locale, t, tf_paginated},
     },
 };
 
@@ -93,11 +94,11 @@ pub struct TransactionFilter {
 }
 
 impl TransactionFilter {
-    pub fn new() -> Self {
+    pub fn new(locale: Locale) -> Self {
         Self {
-            date_from: InputField::new("From"),
-            date_to: InputField::new("To"),
-            description: InputField::new("Desc"),
+            date_from: InputField::new(t(locale, "form.from")),
+            date_to: InputField::new(t(locale, "form.to")),
+            description: InputField::new(t(locale, "form.desc")),
             account_idx: None,
             category_idx: None,
             transaction_type_idx: None,
@@ -166,7 +167,7 @@ impl TransactionFilter {
 
 impl Default for TransactionFilter {
     fn default() -> Self {
-        Self::new()
+        Self::new(Locale::default())
     }
 }
 
@@ -220,27 +221,28 @@ impl TransactionForm {
         &self,
         accounts: &[Account],
         categories: &[Category],
+        locale: Locale,
     ) -> Result<ValidatedTransaction, String> {
         let date = NaiveDate::parse_from_str(self.date.value.trim(), "%d-%m-%Y")
-            .map_err(|_| "Invalid date (use DD-MM-YYYY)".to_string())?;
+            .map_err(|_| t(locale, "err.invalid_date").to_string())?;
 
         let description = self.description.value.trim().to_string();
         if description.is_empty() {
-            return Err("Description is required".into());
+            return Err(t(locale, "err.description_required").into());
         }
 
-        let amount = parse_positive_amount(&self.amount.value)?;
+        let amount = parse_positive_amount(&self.amount.value, locale)?;
 
         let account = accounts
             .get(self.account_idx)
-            .ok_or("No account selected")?;
+            .ok_or_else(|| t(locale, "err.no_account"))?;
         let account_id = account.id;
 
         let methods = account.allowed_payment_methods();
         let payment_method = methods
             .get(self.payment_method_idx)
             .copied()
-            .ok_or("No payment method selected")?;
+            .ok_or_else(|| t(locale, "err.no_payment_method"))?;
 
         let transaction_type = self.transaction_type;
         let filtered_categories: Vec<&Category> = categories
@@ -250,7 +252,7 @@ impl TransactionForm {
         let category_id = filtered_categories
             .get(self.category_idx)
             .map(|c| c.id)
-            .ok_or("No category selected")?;
+            .ok_or_else(|| t(locale, "err.no_category"))?;
 
         Ok(ValidatedTransaction {
             date,
@@ -263,14 +265,14 @@ impl TransactionForm {
         })
     }
 
-    pub fn new_create() -> Self {
+    pub fn new_create(locale: Locale) -> Self {
         let today = Local::now().date_naive();
 
         Self {
             mode: TransactionFormMode::Create,
-            date: InputField::new("Date").with_value(today.format("%d-%m-%Y").to_string()),
-            description: InputField::new("Description"),
-            amount: InputField::new("Amount"),
+            date: InputField::new(t(locale, "form.date")).with_value(today.format("%d-%m-%Y").to_string()),
+            description: InputField::new(t(locale, "form.description")),
+            amount: InputField::new(t(locale, "form.amount")),
             transaction_type: TransactionType::Expense,
             account_idx: 0,
             payment_method_idx: 0,
@@ -280,7 +282,7 @@ impl TransactionForm {
         }
     }
 
-    pub fn new_edit(txn: &Transaction, accounts: &[Account], categories: &[Category]) -> Self {
+    pub fn new_edit(txn: &Transaction, accounts: &[Account], categories: &[Category], locale: Locale) -> Self {
         let txn_type = txn.parsed_type();
 
         let account_idx = accounts
@@ -309,9 +311,9 @@ impl TransactionForm {
 
         Self {
             mode: TransactionFormMode::Edit(txn.id),
-            date: InputField::new("Date").with_value(txn.date.format("%d-%m-%Y").to_string()),
-            description: InputField::new("Description").with_value(&txn.description),
-            amount: InputField::new("Amount").with_value(txn.amount.to_string()),
+            date: InputField::new(t(locale, "form.date")).with_value(txn.date.format("%d-%m-%Y").to_string()),
+            description: InputField::new(t(locale, "form.description")).with_value(&txn.description),
+            amount: InputField::new(t(locale, "form.amount")).with_value(txn.amount.to_string()),
             transaction_type: txn_type,
             account_idx,
             payment_method_idx,
@@ -348,15 +350,21 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         render_filter_bar(frame, filter_area, app);
     }
 
-    let header = Row::new(["Date", "Description", "Amount", "Account", "Category"])
-        .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let header = Row::new([
+        t(app.locale, "header.date"),
+        t(app.locale, "header.description"),
+        t(app.locale, "header.amount"),
+        t(app.locale, "header.account"),
+        t(app.locale, "header.category"),
+    ])
+    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .txn.items
         .iter()
         .map(|txn| {
             let account_name = app.account_name(txn.account_id);
-            let category_name = app.category_name(txn.category_id);
+            let category_name = app.category_name_localized(txn.category_id);
 
             let amount_str = if txn.parsed_type() == TransactionType::Expense {
                 format!("-{}", format_brl(txn.amount))
@@ -391,9 +399,9 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .title(if app.txn.count > 0 {
                 let start = app.txn.offset + 1;
                 let end = app.txn.offset + app.txn.items.len() as u64;
-                format!("Transactions ({start}-{end} of {})", app.txn.count)
+                tf_paginated(app.locale, t(app.locale, "title.transactions"), start, end, app.txn.count)
             } else {
-                "Transactions (0)".to_string()
+                format!("{} (0)", t(app.locale, "title.transactions"))
             }),
     )
     .row_highlight_style(
@@ -413,7 +421,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             let account_name = app.account_name(txn.account_id);
 
             let installment_info = match (txn.installment_purchase_id, txn.installment_number) {
-                (Some(_), Some(n)) => format!(" | Installment #{n}"),
+                (Some(_), Some(n)) => format!(" | {} #{n}", t(app.locale, "detail.installment")),
                 _ => String::new(),
             };
 
@@ -421,8 +429,8 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 Line::from(format!(
                     " {} | {} | {}",
                     txn.date.format("%d-%m-%Y"),
-                    txn.parsed_type().label(),
-                    txn.parsed_payment_method().label(),
+                    app.locale.enum_label(txn.parsed_type().label()),
+                    app.locale.enum_label(txn.parsed_payment_method().label()),
                 )),
                 Line::from(format!(
                     " {} | {} | {}{}",
@@ -432,21 +440,22 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     installment_info,
                 )),
                 Line::from(format!(
-                    " Created: {}",
+                    " {}: {}",
+                    t(app.locale, "misc.created"),
                     txn.created_at.format("%d-%m-%Y %H:%M")
                 )),
                 Line::from(Span::styled(
-                    " [n] New  [e] Edit  [d] Delete  [f] Filter  [r] Reset  [x] Export",
+                    format!(" {}", t(app.locale, "hint.txn")),
                     Style::new().fg(Color::DarkGray),
                 )),
             ]
         }
-        None => vec![Line::from(" No transaction selected.")],
+        None => vec![Line::from(format!(" {}", t(app.locale, "misc.no_sel.transaction")))],
     };
 
     let detail_block = Block::default()
         .borders(Borders::ALL)
-        .title("Transaction Details");
+        .title(t(app.locale, "title.transaction_details"));
     let detail = Paragraph::new(detail_content).block(detail_block);
     frame.render_widget(detail, detail_area);
 }
@@ -504,47 +513,49 @@ fn render_filter_bar(frame: &mut Frame, area: Rect, app: &mut App) {
             Style::new().fg(Color::DarkGray)
         };
 
+        let all = t(app.locale, "filter.all");
         let (label, value) = match field {
             FilterField::Account => (
-                "Acct",
+                t(app.locale, "filter.acct"),
                 filter
                     .account_idx
                     .and_then(|i| app.accounts.get(i))
                     .map(|a| a.name.as_str())
-                    .unwrap_or("All"),
+                    .unwrap_or(all),
             ),
             FilterField::Category => (
-                "Cat",
+                t(app.locale, "filter.cat"),
                 filter
                     .category_idx
                     .and_then(|i| app.categories.get(i))
                     .map(|c| c.name.as_str())
-                    .unwrap_or("All"),
+                    .unwrap_or(all),
             ),
             FilterField::TransactionType => (
-                "Type",
+                t(app.locale, "filter.type"),
                 match filter.transaction_type_idx {
-                    Some(0) => "Expense",
-                    Some(_) => "Income",
-                    None => "All",
+                    Some(0) => app.locale.enum_label("Expense"),
+                    Some(_) => app.locale.enum_label("Income"),
+                    None => all,
                 },
             ),
             FilterField::PaymentMethod => {
-                const LABELS: [&str; 6] = [
-                    "PIX",
-                    "Credit Card",
-                    "Debit Card",
-                    "Cash",
-                    "Boleto",
-                    "Transfer",
-                ];
-                (
-                    "Pay",
-                    filter
-                        .payment_method_idx
-                        .and_then(|i| LABELS.get(i).copied())
-                        .unwrap_or("All"),
-                )
+                let pm_value = filter
+                    .payment_method_idx
+                    .and_then(|i| {
+                        [
+                            PaymentMethod::Pix,
+                            PaymentMethod::Credit,
+                            PaymentMethod::Debit,
+                            PaymentMethod::Cash,
+                            PaymentMethod::Boleto,
+                            PaymentMethod::Transfer,
+                        ]
+                        .get(i)
+                        .map(|m| app.locale.enum_label(m.label()))
+                    })
+                    .unwrap_or(all);
+                (t(app.locale, "filter.pay"), pm_value)
             }
             _ => unreachable!(),
         };
@@ -560,7 +571,7 @@ fn render_filter_bar(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("Filter (Enter=apply, Esc=close, r=reset)")
+        .title(t(app.locale, "title.filter"))
         .border_style(Style::new().fg(border_color));
 
     let lines = vec![Line::from(row1), Line::from(row2)];
@@ -571,8 +582,8 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
     let form = app.txn.form.as_ref().unwrap();
 
     let title = match form.mode {
-        TransactionFormMode::Create => "New Transaction",
-        TransactionFormMode::Edit(_) => "Edit Transaction",
+        TransactionFormMode::Create => t(app.locale, "title.new_transaction"),
+        TransactionFormMode::Edit(_) => t(app.locale, "title.edit_transaction"),
     };
 
     let mut lines: Vec<Line> = Vec::new();
@@ -583,19 +594,25 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
             TransactionField::Date => form.date.render_line(active),
             TransactionField::Description => form.description.render_line(active),
             TransactionField::Amount => form.amount.render_line(active),
-            TransactionField::TransactionType => render_toggle(
-                "Type",
-                &["Expense", "Income"],
-                if form.transaction_type == TransactionType::Expense {
-                    0
-                } else {
-                    1
-                },
-                active,
-            ),
+            TransactionField::TransactionType => {
+                let labels: Vec<&str> = [TransactionType::Expense, TransactionType::Income]
+                    .iter()
+                    .map(|tt| app.locale.enum_label(tt.label()))
+                    .collect();
+                render_toggle(
+                    t(app.locale, "form.type"),
+                    &labels,
+                    if form.transaction_type == TransactionType::Expense {
+                        0
+                    } else {
+                        1
+                    },
+                    active,
+                )
+            }
             TransactionField::Account => {
                 let names: Vec<&str> = app.accounts.iter().map(|a| a.name.as_str()).collect();
-                render_selector("Account", &names, form.account_idx, active, "no accounts")
+                render_selector(t(app.locale, "form.account"), &names, form.account_idx, active, t(app.locale, "misc.no_accounts"))
             }
             TransactionField::PaymentMethod => {
                 let methods: Vec<&str> = app
@@ -604,11 +621,11 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .map(|a| {
                         a.allowed_payment_methods()
                             .iter()
-                            .map(|m| m.label())
+                            .map(|m| app.locale.enum_label(m.label()))
                             .collect()
                     })
                     .unwrap_or_default();
-                render_selector("Payment", &methods, form.payment_method_idx, active, "none")
+                render_selector(t(app.locale, "form.payment"), &methods, form.payment_method_idx, active, t(app.locale, "misc.none"))
             }
             TransactionField::Category => {
                 let filtered: Vec<&str> = app
@@ -617,7 +634,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .filter(|c| c.parsed_type() == form.transaction_type.category_type())
                     .map(|c| c.name.as_str())
                     .collect();
-                render_selector("Category", &filtered, form.category_idx, active, "none")
+                render_selector(t(app.locale, "form.category"), &filtered, form.category_idx, active, t(app.locale, "misc.none"))
             }
         };
         lines.push(line);
@@ -650,11 +667,11 @@ impl App {
             }
             KeyCode::Char('n') => {
                 if self.accounts.is_empty() {
-                    self.status_message = Some(StatusMessage::error("Create an account first"));
+                    self.status_message = Some(StatusMessage::error(t(self.locale, "msg.create_account_first")));
                 } else if self.categories.is_empty() {
-                    self.status_message = Some(StatusMessage::error("Create a category first"));
+                    self.status_message = Some(StatusMessage::error(t(self.locale, "msg.create_category_first")));
                 } else {
-                    self.txn.form = Some(TransactionForm::new_create());
+                    self.txn.form = Some(TransactionForm::new_create(self.locale));
                     self.input_mode = InputMode::Editing;
                 }
             }
@@ -666,7 +683,7 @@ impl App {
                 {
                     if txn.installment_purchase_id.is_some() {
                         self.status_message = Some(StatusMessage::error(
-                            "Installment transactions are managed from the Installments screen",
+                            t(self.locale, "msg.installment_managed"),
                         ));
                     } else {
                         let txn = txn.clone();
@@ -674,6 +691,7 @@ impl App {
                             &txn,
                             &self.accounts,
                             &self.categories,
+                            self.locale,
                         ));
                         self.input_mode = InputMode::Editing;
                     }
@@ -687,14 +705,14 @@ impl App {
                 {
                     if txn.installment_purchase_id.is_some() {
                         self.status_message = Some(StatusMessage::error(
-                            "Installment transactions are managed from the Installments screen",
+                            t(self.locale, "msg.installment_managed"),
                         ));
                     } else {
                         let txn_id = txn.id;
                         let txn_desc = txn.description.clone();
                         self.confirm_action = Some(ConfirmAction::DeleteTransaction(txn_id));
                         self.confirm_popup = Some(crate::ui::components::popup::ConfirmPopup::new(
-                            format!("Delete \"{txn_desc}\"?"),
+                            crate::ui::i18n::tf_delete(self.locale, &txn_desc),
                         ));
                     }
                 }
@@ -705,7 +723,7 @@ impl App {
                 self.input_mode = InputMode::Filtering;
             }
             KeyCode::Char('r') => {
-                self.txn.filter = TransactionFilter::new();
+                self.txn.filter = TransactionFilter::new(self.locale);
                 self.txn.offset = 0;
                 self.load_transactions().await?;
                 self.txn.table_state.select(Some(0));
@@ -729,21 +747,21 @@ impl App {
                             },
                         ) {
                             Ok(path) => {
-                                self.status_message = Some(StatusMessage::info(format!(
-                                    "Exported {} transactions to {}",
-                                    all_txns.len(),
-                                    path.display()
-                                )));
+                                self.status_message = Some(StatusMessage::info(
+                                    crate::ui::i18n::tf_exported(self.locale, all_txns.len(), t(self.locale, "export.transactions"), &path)
+                                ));
                             }
                             Err(e) => {
-                                self.status_message =
-                                    Some(StatusMessage::error(format!("Export failed: {e}")));
+                                self.status_message = Some(StatusMessage::error(
+                                    crate::ui::i18n::tf_export_failed(self.locale, &e)
+                                ));
                             }
                         }
                     }
                     Err(e) => {
-                        self.status_message =
-                            Some(StatusMessage::error(format!("Export failed: {e}")));
+                        self.status_message = Some(StatusMessage::error(
+                            crate::ui::i18n::tf_export_failed(self.locale, &e)
+                        ));
                     }
                 }
             }
@@ -893,7 +911,7 @@ impl App {
         use crate::db::transactions;
 
         let form = self.txn.form.as_ref().unwrap();
-        let validated = match form.validate(&self.accounts, &self.categories) {
+        let validated = match form.validate(&self.accounts, &self.categories, self.locale) {
             Ok(v) => v,
             Err(e) => {
                 self.txn.form.as_mut().unwrap().error = Some(e);

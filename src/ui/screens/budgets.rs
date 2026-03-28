@@ -23,6 +23,7 @@ use crate::{
             popup::ConfirmPopup,
             toggle::{push_form_error, render_selector, render_toggle},
         },
+        i18n::{Locale, t},
     },
 };
 
@@ -64,8 +65,8 @@ pub const PERIODS: [BudgetPeriod; 3] = [
 ];
 
 impl BudgetForm {
-    pub fn validate(&self, categories: &[Category]) -> Result<ValidatedBudget, String> {
-        let amount = parse_positive_amount(&self.amount.value)?;
+    pub fn validate(&self, categories: &[Category], locale: Locale) -> Result<ValidatedBudget, String> {
+        let amount = parse_positive_amount(&self.amount.value, locale)?;
 
         let expense_categories: Vec<&Category> = categories
             .iter()
@@ -74,12 +75,12 @@ impl BudgetForm {
         let category_id = expense_categories
             .get(self.category_idx)
             .map(|c| c.id)
-            .ok_or("No category selected")?;
+            .ok_or_else(|| t(locale, "err.no_category"))?;
 
         let period = PERIODS
             .get(self.period_idx)
             .copied()
-            .ok_or("No period selected")?;
+            .ok_or_else(|| t(locale, "err.no_period"))?;
 
         Ok(ValidatedBudget {
             category_id,
@@ -88,18 +89,18 @@ impl BudgetForm {
         })
     }
 
-    pub fn new_create() -> Self {
+    pub fn new_create(locale: Locale) -> Self {
         Self {
             mode: BudgetFormMode::Create,
             category_idx: 0,
-            amount: InputField::new("Amount"),
+            amount: InputField::new(t(locale, "form.amount")),
             period_idx: 1, // default to Monthly
             active_field: 0,
             error: None,
         }
     }
 
-    pub fn new_edit(budget: &crate::models::Budget, categories: &[Category]) -> Self {
+    pub fn new_edit(budget: &crate::models::Budget, categories: &[Category], locale: Locale) -> Self {
         let expense_categories: Vec<&Category> = categories
             .iter()
             .filter(|c| c.parsed_type() == CategoryType::Expense)
@@ -117,7 +118,7 @@ impl BudgetForm {
         Self {
             mode: BudgetFormMode::Edit(budget.id),
             category_idx,
-            amount: InputField::new("Amount").with_value(budget.amount.to_string()),
+            amount: InputField::new(t(locale, "form.amount")).with_value(budget.amount.to_string()),
             period_idx,
             active_field: 1, // start on Amount (the only editable field)
             error: None,
@@ -141,14 +142,14 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let [table_area, detail_area] =
         Layout::vertical([Constraint::Min(5), Constraint::Length(6)]).areas(area);
 
-    let header = Row::new(["Category", "Amount", "Period", "Spent", "%"])
+    let header = Row::new([t(app.locale, "header.category"), t(app.locale, "header.amount"), t(app.locale, "header.period"), t(app.locale, "header.spent"), t(app.locale, "header.pct")])
         .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .budget.items
         .iter()
         .map(|b| {
-            let category_name = app.category_name(b.category_id);
+            let category_name = app.category_name_localized(b.category_id);
 
             let spent = app
                 .budget.spent
@@ -172,7 +173,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             Row::new([
                 category_name.to_string(),
                 format_brl(b.amount),
-                b.parsed_period().label().to_string(),
+                app.locale.enum_label(b.parsed_period().label()).to_string(),
                 format_brl(spent),
                 format!("{}%", pct.round()),
             ])
@@ -191,7 +192,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         ],
     )
     .header(header)
-    .block(Block::default().borders(Borders::ALL).title("Budgets"))
+    .block(Block::default().borders(Borders::ALL).title(t(app.locale, "title.budgets")))
     .row_highlight_style(
         Style::new()
             .bg(Color::DarkGray)
@@ -206,7 +207,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .and_then(|i| app.budget.items.get(i))
     {
         Some(b) => {
-            let category_name = app.category_name(b.category_id);
+            let category_name = app.category_name_localized(b.category_id);
 
             let spent = app
                 .budget.spent
@@ -218,26 +219,27 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 Line::from(format!(
                     " {} | {} | {}",
                     category_name,
-                    b.parsed_period().label(),
+                    app.locale.enum_label(b.parsed_period().label()),
                     format_brl(b.amount),
                 )),
-                Line::from(format!(" Spent: {}", format_brl(spent))),
+                Line::from(format!(" {}: {}", t(app.locale, "detail.spent"), format_brl(spent))),
                 Line::from(format!(
-                    " Created: {}",
+                    " {}: {}",
+                    t(app.locale, "detail.created"),
                     b.created_at.format("%d-%m-%Y %H:%M")
                 )),
                 Line::from(Span::styled(
-                    " [n] New  [e] Edit  [d] Delete  [x] Export",
+                    format!(" {}", t(app.locale, "hint.budget")),
                     Style::new().fg(Color::DarkGray),
                 )),
             ]
         }
-        None => vec![Line::from(" No budget selected.")],
+        None => vec![Line::from(format!(" {}", t(app.locale, "misc.no_sel.budget")))],
     };
 
     let detail_block = Block::default()
         .borders(Borders::ALL)
-        .title("Budget Details");
+        .title(t(app.locale, "title.budget_details"));
     let detail = Paragraph::new(detail_content).block(detail_block);
     frame.render_widget(detail, detail_area);
 }
@@ -246,7 +248,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
     let form = app.budget.form.as_ref().unwrap();
     let is_edit = matches!(form.mode, BudgetFormMode::Edit(_));
 
-    let title = if is_edit { "Edit Budget" } else { "New Budget" };
+    let title = if is_edit { t(app.locale, "title.edit_budget") } else { t(app.locale, "title.new_budget") };
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -262,29 +264,33 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .collect();
                 if is_edit {
                     Line::from(format!(
-                        " Category: {} (locked)",
-                        names.get(form.category_idx).unwrap_or(&"?")
+                        " {}: {} ({})",
+                        t(app.locale, "form.category"),
+                        names.get(form.category_idx).unwrap_or(&"?"),
+                        t(app.locale, "misc.locked")
                     ))
                 } else {
                     render_selector(
-                        "Category",
+                        t(app.locale, "form.category"),
                         &names,
                         form.category_idx,
                         active,
-                        "no expense categories",
+                        t(app.locale, "misc.no_expense_cats"),
                     )
                 }
             }
             BudgetField::Amount => form.amount.render_line(active),
             BudgetField::Period => {
-                let labels: Vec<&str> = PERIODS.iter().map(|p| p.label()).collect();
+                let labels: Vec<&str> = PERIODS.iter().map(|p| app.locale.enum_label(p.label())).collect();
                 if is_edit {
                     Line::from(format!(
-                        " Period: {} (locked)",
-                        labels.get(form.period_idx).unwrap_or(&"?")
+                        " {}: {} ({})",
+                        t(app.locale, "form.period"),
+                        labels.get(form.period_idx).unwrap_or(&"?"),
+                        t(app.locale, "misc.locked")
                     ))
                 } else {
-                    render_toggle("Period", &labels, form.period_idx, active)
+                    render_toggle(t(app.locale, "form.period"), &labels, form.period_idx, active)
                 }
             }
         };
@@ -315,9 +321,9 @@ impl App {
                     .any(|c| c.parsed_type() == CategoryType::Expense);
                 if !has_expense_cat {
                     self.status_message =
-                        Some(StatusMessage::error("Create an expense category first"));
+                        Some(StatusMessage::error(t(self.locale, "msg.create_expense_cat_first")));
                 } else {
-                    self.budget.form = Some(BudgetForm::new_create());
+                    self.budget.form = Some(BudgetForm::new_create(self.locale));
                     self.input_mode = InputMode::Editing;
                 }
             }
@@ -328,7 +334,7 @@ impl App {
                     .and_then(|i| self.budget.items.get(i))
                 {
                     let b = b.clone();
-                    self.budget.form = Some(BudgetForm::new_edit(&b, &self.categories));
+                    self.budget.form = Some(BudgetForm::new_edit(&b, &self.categories, self.locale));
                     self.input_mode = InputMode::Editing;
                 }
             }
@@ -341,9 +347,9 @@ impl App {
                     let budget_id = b.id;
                     let category_name = self.category_name(b.category_id).to_string();
                     self.confirm_action = Some(ConfirmAction::DeleteBudget(budget_id));
-                    self.confirm_popup = Some(ConfirmPopup::new(format!(
-                        "Delete budget for \"{category_name}\"?"
-                    )));
+                    self.confirm_popup = Some(ConfirmPopup::new(
+                        crate::ui::i18n::tf_delete_budget(self.locale, &category_name)
+                    ));
                 }
             }
             KeyCode::Char('x') => {
@@ -359,15 +365,14 @@ impl App {
                     &self.budget.spent,
                 ) {
                     Ok(path) => {
-                        self.status_message = Some(StatusMessage::info(format!(
-                            "Exported {} budgets to {}",
-                            self.budget.items.len(),
-                            path.display()
-                        )));
+                        self.status_message = Some(StatusMessage::info(
+                            crate::ui::i18n::tf_exported(self.locale, self.budget.items.len(), t(self.locale, "export.budgets"), &path)
+                        ));
                     }
                     Err(e) => {
-                        self.status_message =
-                            Some(StatusMessage::error(format!("Export failed: {e}")));
+                        self.status_message = Some(StatusMessage::error(
+                            crate::ui::i18n::tf_export_failed(self.locale, &e)
+                        ));
                     }
                 }
             }
@@ -422,7 +427,7 @@ impl App {
         use crate::db::budgets;
 
         let form = self.budget.form.as_ref().unwrap();
-        let validated = match form.validate(&self.categories) {
+        let validated = match form.validate(&self.categories, self.locale) {
             Ok(v) => v,
             Err(e) => {
                 self.budget.form.as_mut().unwrap().error = Some(e);
@@ -463,7 +468,7 @@ impl App {
                         .is_some_and(|db_err| db_err.is_unique_violation())
                     {
                         self.budget.form.as_mut().unwrap().error =
-                            Some("A budget for this category and period already exists".into());
+                            Some(t(self.locale, "err.budget_exists").into());
                         return Ok(());
                     }
                     return Err(e.into());

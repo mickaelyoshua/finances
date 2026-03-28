@@ -8,7 +8,7 @@ use ratatui::{
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 
-use crate::ui::{App, components::format::format_brl};
+use crate::ui::{App, components::format::format_brl, i18n::{t, tf_notifications_title}};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let has_notifs = !app.dashboard.notifications.is_empty();
@@ -76,10 +76,7 @@ fn render_notifications(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let title = format!(
-        "Notifications ({} unread) — r: dismiss  R: dismiss all",
-        app.dashboard.notifications.len()
-    );
+    let title = tf_notifications_title(app.locale, app.dashboard.notifications.len());
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
@@ -90,8 +87,13 @@ fn render_notifications(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
-    let header = Row::new(["Account", "Type", "Checking", "Credit Used"])
-        .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let header = Row::new([
+        t(app.locale, "header.account"),
+        t(app.locale, "header.type"),
+        t(app.locale, "header.checking"),
+        t(app.locale, "header.credit_used"),
+    ])
+    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let balances: Vec<(Decimal, Decimal)> = app
         .accounts
@@ -118,17 +120,18 @@ fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
                 let limit = acc.credit_limit.unwrap_or(Decimal::ZERO);
                 let free = limit - credit;
                 format!(
-                    "{} / {} ({} free)",
+                    "{} / {} ({} {})",
                     format_brl(credit),
                     format_brl(limit),
-                    format_brl(free)
+                    format_brl(free),
+                    t(app.locale, "misc.free")
                 )
             } else {
                 "-".to_string()
             };
             Row::new([
                 acc.name.clone(),
-                acc.parsed_type().label().to_string(),
+                app.locale.enum_label(acc.parsed_type().label()).to_string(),
                 format_brl(checking),
                 credit_cell,
             ])
@@ -139,14 +142,15 @@ fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
     if !app.accounts.is_empty() {
         rows.push(
             Row::new([
-                "TOTAL".to_string(),
+                t(app.locale, "misc.total").to_string(),
                 String::new(),
                 format_brl(total_checking),
                 format!(
-                    "{} / {} ({} free)",
+                    "{} / {} ({} {})",
                     format_brl(total_credit),
                     format_brl(total_limit),
-                    format_brl(total_free)
+                    format_brl(total_free),
+                    t(app.locale, "misc.free")
                 ),
             ])
             .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
@@ -166,7 +170,7 @@ fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Accounts Balances"),
+            .title(t(app.locale, "title.accounts_balances")),
     );
 
     frame.render_widget(table, area);
@@ -197,7 +201,7 @@ fn render_current_statements(frame: &mut Frame, area: Rect, app: &App) {
                     },
                 ),
                 Span::styled(
-                    format!("  due {}", stmt.due_date.format("%d/%m")),
+                    format!("  {} {}", t(app.locale, "misc.due"), stmt.due_date.format("%d/%m")),
                     Style::new().fg(Color::DarkGray),
                 ),
             ])
@@ -215,7 +219,7 @@ fn render_current_statements(frame: &mut Frame, area: Rect, app: &App) {
             Style::new().fg(Color::DarkGray),
         )));
         lines.push(Line::from(vec![
-            Span::styled(format!("  {:<14}", "Total"), Style::new().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("  {:<14}", t(app.locale, "header.total")), Style::new().fg(Color::White).add_modifier(Modifier::BOLD)),
             Span::raw("              "),
             Span::styled(
                 format_brl(total),
@@ -230,7 +234,7 @@ fn render_current_statements(frame: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("Current CC Statements (Open)");
+        .title(t(app.locale, "title.current_cc_statements"));
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -239,7 +243,7 @@ fn render_budgets(frame: &mut Frame, area: Rect, app: &App) {
         .budget.items
         .iter()
         .map(|b| {
-            let cat_name = app.category_name(b.category_id);
+            let cat_name = app.category_name_localized(b.category_id);
 
             let spent = app
                 .budget.spent
@@ -275,7 +279,7 @@ fn render_budgets(frame: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("Budget Status");
+        .title(t(app.locale, "title.budget_status"));
     let paragraph = Paragraph::new(lines).block(block);
 
     frame.render_widget(paragraph, area);
@@ -283,15 +287,16 @@ fn render_budgets(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_recurring(frame: &mut Frame, area: Rect, app: &App) {
     let lines: Vec<Line> = if app.recur.pending.is_empty() {
-        vec![Line::from("  No pending recurring transactions.")]
+        vec![Line::from(format!("  {}", t(app.locale, "misc.no_pending_recurring")))]
     } else {
         app.recur.pending
             .iter()
             .map(|r| {
                 Line::from(format!(
-                    "  {} - {} (due {})",
+                    "  {} - {} ({} {})",
                     r.description,
                     format_brl(r.amount),
+                    t(app.locale, "misc.due"),
                     r.next_due.format("%b %d"),
                 ))
             })
@@ -300,7 +305,7 @@ fn render_recurring(frame: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("Pending Recurring");
+        .title(t(app.locale, "title.pending_recurring"));
     let paragraph = Paragraph::new(lines).block(block);
 
     frame.render_widget(paragraph, area);

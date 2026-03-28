@@ -16,6 +16,7 @@ use ratatui::{
 };
 
 use super::app::{App, InputMode, Screen};
+use super::i18n::{Locale, t};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let [tab_area, content_area, status_area] = Layout::vertical([
@@ -25,21 +26,26 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     ])
     .areas(frame.area());
 
-    render_tabs(frame, tab_area, app.screen);
+    render_tabs(frame, tab_area, app.screen, app.locale);
     render_content(frame, content_area, app);
     render_status_bar(frame, status_area, app);
 
     // Popup overlay (renders on top of everything)
     if let Some(popup) = &app.confirm_popup {
-        popup.render(frame, frame.area());
+        popup.render(frame, frame.area(), app.locale);
+    }
+
+    // Help popup overlay
+    if let Some(popup) = &app.help_popup {
+        popup.render(frame, frame.area(), app.locale);
     }
 }
 
-fn render_tabs(frame: &mut Frame, area: Rect, current: Screen) {
+fn render_tabs(frame: &mut Frame, area: Rect, current: Screen, locale: Locale) {
     let all_titles: Vec<String> = Screen::ALL
         .iter()
         .enumerate()
-        .map(|(i, s)| format!(" {} {} ", i + 1, s.label()))
+        .map(|(i, s)| format!(" {} {} ", i + 1, t(locale, s.i18n_key())))
         .collect();
 
     // Calculate total width needed: each title + "|" dividers between them
@@ -181,32 +187,33 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    let l = app.locale;
     let mut spans = vec![env_badge];
     match app.input_mode {
         InputMode::Editing => {
             spans.extend([
                 Span::styled(" Esc", Style::new().fg(Color::Yellow)),
-                Span::raw(" Cancel "),
+                Span::raw(format!(" {} ", t(l, "status.cancel"))),
                 Span::styled("Tab/↑↓", Style::new().fg(Color::Yellow)),
-                Span::raw(" Navigate "),
+                Span::raw(format!(" {} ", t(l, "status.nav_fields"))),
                 Span::styled("Space", Style::new().fg(Color::Yellow)),
-                Span::raw(" Toggle "),
+                Span::raw(format!(" {} ", t(l, "status.toggle"))),
                 Span::styled("Enter", Style::new().fg(Color::Yellow)),
-                Span::raw(" Submit"),
+                Span::raw(format!(" {}", t(l, "status.submit"))),
             ]);
         }
         InputMode::Normal => {
             spans.extend([
                 Span::styled(" q", Style::new().fg(Color::Yellow)),
-                Span::raw(" Quit "),
+                Span::raw(format!(" {} ", t(l, "status.quit"))),
                 Span::styled("0-9", Style::new().fg(Color::Yellow)),
-                Span::raw(" Screen "),
+                Span::raw(format!(" {} ", t(l, "status.screen"))),
                 Span::styled("← →", Style::new().fg(Color::Yellow)),
-                Span::raw(" Navigate"),
+                Span::raw(format!(" {}", t(l, "status.navigate"))),
             ]);
             if !app.dashboard.notifications.is_empty() {
                 spans.push(Span::styled(
-                    format!(" [{} unread]", app.dashboard.notifications.len()),
+                    format!(" [{} {}]", app.dashboard.notifications.len(), t(l, "status.unread")),
                     Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
                 ));
             }
@@ -214,13 +221,13 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         InputMode::Filtering => {
             spans.extend([
                 Span::styled(" Esc", Style::new().fg(Color::Yellow)),
-                Span::raw(" Close "),
+                Span::raw(format!(" {} ", t(l, "status.close"))),
                 Span::styled("Enter", Style::new().fg(Color::Yellow)),
-                Span::raw(" Apply "),
+                Span::raw(format!(" {} ", t(l, "status.apply"))),
                 Span::styled("Tab/↑↓", Style::new().fg(Color::Yellow)),
-                Span::raw(" Navigate "),
+                Span::raw(format!(" {} ", t(l, "status.nav_fields"))),
                 Span::styled("Space", Style::new().fg(Color::Yellow)),
-                Span::raw(" Cycle"),
+                Span::raw(format!(" {}", t(l, "status.cycle"))),
             ]);
         }
     }

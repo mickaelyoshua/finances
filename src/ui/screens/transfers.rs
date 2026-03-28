@@ -24,6 +24,7 @@ use crate::{
             popup::ConfirmPopup,
             toggle::{push_form_error, render_selector},
         },
+        i18n::{Locale, t, tf_paginated},
     },
 };
 
@@ -65,40 +66,40 @@ pub struct ValidatedTransfer {
 }
 
 impl TransferForm {
-    pub fn new_create() -> Self {
+    pub fn new_create(locale: Locale) -> Self {
         let today = Local::now().date_naive();
 
         Self {
-            date: InputField::new("Date").with_value(today.format("%d-%m-%Y").to_string()),
+            date: InputField::new(t(locale, "form.date")).with_value(today.format("%d-%m-%Y").to_string()),
             from_account_idx: 0,
             to_account_idx: 1, // default to second account; clamped by cycle_index
-            amount: InputField::new("Amount"),
-            description: InputField::new("Description"),
+            amount: InputField::new(t(locale, "form.amount")),
+            description: InputField::new(t(locale, "form.description")),
             active_field: 0,
             error: None,
         }
     }
 
-    pub fn validate(&self, accounts: &[Account]) -> Result<ValidatedTransfer, String> {
+    pub fn validate(&self, accounts: &[Account], locale: Locale) -> Result<ValidatedTransfer, String> {
         let date = NaiveDate::parse_from_str(self.date.value.trim(), "%d-%m-%Y")
-            .map_err(|_| "Invalid date (use DD-MM-YYYY)".to_string())?;
+            .map_err(|_| t(locale, "err.invalid_date").to_string())?;
 
         let from_account = accounts
             .get(self.from_account_idx)
-            .ok_or("No source account selected")?;
+            .ok_or(t(locale, "err.no_source_account"))?;
         let to_account = accounts
             .get(self.to_account_idx)
-            .ok_or("No destination account selected")?;
+            .ok_or(t(locale, "err.no_dest_account"))?;
 
         if from_account.id == to_account.id {
-            return Err("Source and destination must be different accounts".into());
+            return Err(t(locale, "err.same_account").into());
         }
 
-        let amount = parse_positive_amount(&self.amount.value)?;
+        let amount = parse_positive_amount(&self.amount.value, locale)?;
 
         let description = self.description.value.trim().to_string();
         if description.is_empty() {
-            return Err("Description is required".into());
+            return Err(t(locale, "err.description_required").into());
         }
 
         Ok(ValidatedTransfer {
@@ -127,8 +128,14 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let [table_area, detail_area] =
         Layout::vertical([Constraint::Min(5), Constraint::Length(6)]).areas(area);
 
-    let header = Row::new(["Date", "From", "To", "Amount", "Description"])
-        .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let header = Row::new([
+        t(app.locale, "header.date"),
+        t(app.locale, "header.from"),
+        t(app.locale, "header.to"),
+        t(app.locale, "header.amount"),
+        t(app.locale, "header.description"),
+    ])
+    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .xfer.items
@@ -161,9 +168,9 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .title(if app.xfer.count > 0 {
                 let start = app.xfer.offset + 1;
                 let end = app.xfer.offset + app.xfer.items.len() as u64;
-                format!("Transfers ({start}-{end} of {})", app.xfer.count)
+                tf_paginated(app.locale, t(app.locale, "title.transfers"), start, end, app.xfer.count)
             } else {
-                "Transfers (0)".to_string()
+                format!("{} (0)", t(app.locale, "title.transfers"))
             }),
     )
     .row_highlight_style(
@@ -179,31 +186,32 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .selected()
         .and_then(|i| app.xfer.items.get(i))
     {
-        Some(t) => {
+        Some(xf) => {
             vec![
                 Line::from(format!(
                     " {} | {} -> {}",
-                    t.date.format("%d-%m-%Y"),
-                    app.account_name(t.from_account_id),
-                    app.account_name(t.to_account_id),
+                    xf.date.format("%d-%m-%Y"),
+                    app.account_name(xf.from_account_id),
+                    app.account_name(xf.to_account_id),
                 )),
-                Line::from(format!(" {} | {}", format_brl(t.amount), t.description,)),
+                Line::from(format!(" {} | {}", format_brl(xf.amount), xf.description,)),
                 Line::from(format!(
-                    " Created: {}",
-                    t.created_at.format("%d-%m-%Y %H:%M")
+                    " {}: {}",
+                    t(app.locale, "detail.created"),
+                    xf.created_at.format("%d-%m-%Y %H:%M")
                 )),
                 Line::from(Span::styled(
-                    " [n] New  [d] Delete  [x] Export",
+                    format!(" {}", t(app.locale, "hint.xfer")),
                     Style::new().fg(Color::DarkGray),
                 )),
             ]
         }
-        None => vec![Line::from(" No transfer selected.")],
+        None => vec![Line::from(format!(" {}", t(app.locale, "misc.no_sel.transfer")))],
     };
 
     let detail_block = Block::default()
         .borders(Borders::ALL)
-        .title("Transfer Details");
+        .title(t(app.locale, "title.transfer_details"));
     let detail = Paragraph::new(detail_content).block(detail_block);
     frame.render_widget(detail, detail_area);
 }
@@ -219,11 +227,11 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
             TransferField::Date => form.date.render_line(active),
             TransferField::FromAccount => {
                 let names: Vec<&str> = app.accounts.iter().map(|a| a.name.as_str()).collect();
-                render_selector("From", &names, form.from_account_idx, active, "no accounts")
+                render_selector(t(app.locale, "form.from"), &names, form.from_account_idx, active, t(app.locale, "misc.no_accounts"))
             }
             TransferField::ToAccount => {
                 let names: Vec<&str> = app.accounts.iter().map(|a| a.name.as_str()).collect();
-                render_selector("To", &names, form.to_account_idx, active, "no accounts")
+                render_selector(t(app.locale, "form.to"), &names, form.to_account_idx, active, t(app.locale, "misc.no_accounts"))
             }
             TransferField::Amount => form.amount.render_line(active),
             TransferField::Description => form.description.render_line(active),
@@ -233,7 +241,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 
     push_form_error(&mut lines, &form.error);
 
-    let block = Block::default().borders(Borders::ALL).title("New Transfer");
+    let block = Block::default().borders(Borders::ALL).title(t(app.locale, "title.new_transfer"));
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -251,10 +259,10 @@ impl App {
             KeyCode::Char('n') => {
                 if self.accounts.len() < 2 {
                     self.status_message = Some(StatusMessage::error(
-                        "Need at least 2 accounts for a transfer",
+                        t(self.locale, "msg.need_two_accounts"),
                     ));
                 } else {
-                    self.xfer.form = Some(TransferForm::new_create());
+                    self.xfer.form = Some(TransferForm::new_create(self.locale));
                     self.input_mode = InputMode::Editing;
                 }
             }
@@ -267,10 +275,9 @@ impl App {
                     let t_id = t.id;
                     let t_desc = t.description.clone();
                     self.confirm_action = Some(ConfirmAction::DeleteTransfer(t_id));
-                    self.confirm_popup = Some(ConfirmPopup::new(format!(
-                        "Delete transfer \"{}\"?",
-                        t_desc
-                    )));
+                    self.confirm_popup = Some(ConfirmPopup::new(
+                        crate::ui::i18n::tf_delete_transfer(self.locale, &t_desc)
+                    ));
                 }
             }
             KeyCode::Char('x') => {
@@ -281,21 +288,21 @@ impl App {
                             acct_names.get(&id).cloned().unwrap_or_else(|| "?".into())
                         }) {
                             Ok(path) => {
-                                self.status_message = Some(StatusMessage::info(format!(
-                                    "Exported {} transfers to {}",
-                                    all_transfers.len(),
-                                    path.display()
-                                )));
+                                self.status_message = Some(StatusMessage::info(
+                                    crate::ui::i18n::tf_exported(self.locale, all_transfers.len(), t(self.locale, "export.transfers"), &path)
+                                ));
                             }
                             Err(e) => {
-                                self.status_message =
-                                    Some(StatusMessage::error(format!("Export failed: {e}")));
+                                self.status_message = Some(StatusMessage::error(
+                                    crate::ui::i18n::tf_export_failed(self.locale, &e)
+                                ));
                             }
                         }
                     }
                     Err(e) => {
-                        self.status_message =
-                            Some(StatusMessage::error(format!("Export failed: {e}")));
+                        self.status_message = Some(StatusMessage::error(
+                            crate::ui::i18n::tf_export_failed(self.locale, &e)
+                        ));
                     }
                 }
             }
@@ -354,7 +361,7 @@ impl App {
         use crate::db::transfers;
 
         let form = self.xfer.form.as_ref().unwrap();
-        let validated = match form.validate(&self.accounts) {
+        let validated = match form.validate(&self.accounts, self.locale) {
             Ok(v) => v,
             Err(e) => {
                 self.xfer.form.as_mut().unwrap().error = Some(e);

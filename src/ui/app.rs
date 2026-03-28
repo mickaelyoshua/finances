@@ -29,11 +29,12 @@ use crate::{
         RecurringTransaction, Transaction, Transfer,
     },
     ui::{
-        components::popup::ConfirmPopup,
+        components::{help_popup::HelpPopup, popup::ConfirmPopup},
         screens::transactions::{TransactionFilter, TransactionForm},
     },
 };
 
+use super::i18n::Locale;
 use super::screens::{
     accounts::AccountForm,
     budgets::BudgetForm,
@@ -85,6 +86,21 @@ impl Screen {
             Self::Transfers => "Transfers",
             Self::CreditCardPayments => "CC Payments",
             Self::CreditCardStatements => "CC Statements",
+        }
+    }
+
+    pub fn i18n_key(self) -> &'static str {
+        match self {
+            Self::Dashboard => "screen.dashboard",
+            Self::Transactions => "screen.transactions",
+            Self::Accounts => "screen.accounts",
+            Self::Budgets => "screen.budgets",
+            Self::Categories => "screen.categories",
+            Self::Installments => "screen.installments",
+            Self::Recurring => "screen.recurring",
+            Self::Transfers => "screen.transfers",
+            Self::CreditCardPayments => "screen.cc_payments",
+            Self::CreditCardStatements => "screen.cc_statements",
         }
     }
 
@@ -239,6 +255,8 @@ pub struct App {
     pub pool: PgPool,
     pub is_prod: bool,
     pub input_mode: InputMode,
+    pub locale: Locale,
+    pub help_popup: Option<HelpPopup>,
     pub confirm_popup: Option<ConfirmPopup>,
     pub confirm_action: Option<ConfirmAction>,
     pub status_message: Option<StatusMessage>,
@@ -272,6 +290,8 @@ impl App {
             screen: Screen::Dashboard,
             pool,
             is_prod,
+            locale: Locale::default(),
+            help_popup: None,
             input_mode: InputMode::Normal,
             confirm_popup: None,
             confirm_action: None,
@@ -295,7 +315,7 @@ impl App {
                 form: None,
                 offset: 0,
                 count: 0,
-                filter: TransactionFilter::new(),
+                filter: TransactionFilter::new(Locale::default()),
             },
             acct: AccountScreenState {
                 table_state: TableState::default().with_selected(0),
@@ -359,6 +379,18 @@ impl App {
             .get(&id)
             .map(|s| s.as_str())
             .unwrap_or("?")
+    }
+
+    /// Return the category name in the active locale.
+    /// Fallback chain: PT `name_pt` → EN `name` → "?".
+    pub fn category_name_localized(&self, id: i32) -> &str {
+        if self.locale == Locale::Pt
+            && let Some(cat) = self.categories.iter().find(|c| c.id == id)
+            && let Some(pt) = &cat.name_pt
+        {
+            return pt.as_str();
+        }
+        self.category_name(id)
     }
 
     pub async fn load_data(&mut self) -> anyhow::Result<()> {
@@ -690,6 +722,14 @@ impl App {
             return Ok(());
         }
 
+        // Help popup takes second priority
+        if let Some(popup) = &mut self.help_popup {
+            if popup.handle_key(key.code) {
+                self.help_popup = None;
+            }
+            return Ok(());
+        }
+
         match self.input_mode {
             InputMode::Normal => self.handle_normal_key(key).await,
             InputMode::Editing => self.handle_editing_key(key).await,
@@ -723,6 +763,10 @@ impl App {
                     if let Some((state, len)) = self.active_table_state() {
                         move_table_selection(state, len, -10);
                     }
+                    return Ok(());
+                }
+                KeyCode::Char('l') => {
+                    self.locale = self.locale.toggle();
                     return Ok(());
                 }
                 _ => {}
@@ -760,6 +804,9 @@ impl App {
             KeyCode::Char('g') => self.pending_g = true,
             KeyCode::Char('G') => {
                 self.jump_to_last_row();
+            }
+            KeyCode::Char('?') => {
+                self.help_popup = Some(HelpPopup::new(self.screen));
             }
             _ => match self.screen {
                 Screen::Dashboard => self.handle_dashboard_key(key.code).await?,

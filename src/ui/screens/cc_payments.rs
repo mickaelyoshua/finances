@@ -24,6 +24,7 @@ use crate::{
             popup::ConfirmPopup,
             toggle::{push_form_error, render_selector},
         },
+        i18n::{Locale, t, tf_paginated},
     },
 };
 
@@ -56,34 +57,34 @@ pub struct ValidatedCcPayment {
 }
 
 impl CcPaymentForm {
-    pub fn new_create() -> Self {
+    pub fn new_create(locale: Locale) -> Self {
         let today = Local::now().date_naive();
 
         Self {
-            date: InputField::new("Date").with_value(today.format("%d-%m-%Y").to_string()),
+            date: InputField::new(t(locale, "form.date")).with_value(today.format("%d-%m-%Y").to_string()),
             account_idx: 0,
-            amount: InputField::new("Amount"),
-            description: InputField::new("Description"),
+            amount: InputField::new(t(locale, "form.amount")),
+            description: InputField::new(t(locale, "form.description")),
             active_field: 0,
             error: None,
         }
     }
 
-    pub fn validate(&self, accounts: &[Account]) -> Result<ValidatedCcPayment, String> {
+    pub fn validate(&self, accounts: &[Account], locale: Locale) -> Result<ValidatedCcPayment, String> {
         let date = NaiveDate::parse_from_str(self.date.value.trim(), "%d-%m-%Y")
-            .map_err(|_| "Invalid date (use DD-MM-YYYY)".to_string())?;
+            .map_err(|_| t(locale, "err.invalid_date").to_string())?;
 
         let cc_accounts: Vec<&Account> = accounts.iter().filter(|a| a.has_credit_card).collect();
 
         let account = cc_accounts
             .get(self.account_idx)
-            .ok_or("No account selected")?;
+            .ok_or(t(locale, "err.no_account"))?;
 
-        let amount = parse_positive_amount(&self.amount.value)?;
+        let amount = parse_positive_amount(&self.amount.value, locale)?;
 
         let description = self.description.value.trim().to_string();
         if description.is_empty() {
-            return Err("Description is required".into());
+            return Err(t(locale, "err.description_required").into());
         }
 
         Ok(ValidatedCcPayment {
@@ -111,8 +112,13 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let [table_area, detail_area] =
         Layout::vertical([Constraint::Min(5), Constraint::Length(6)]).areas(area);
 
-    let header = Row::new(["Date", "Account", "Amount", "Description"])
-        .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let header = Row::new([
+        t(app.locale, "header.date"),
+        t(app.locale, "header.account"),
+        t(app.locale, "header.amount"),
+        t(app.locale, "header.description"),
+    ])
+    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .cc_pay.items
@@ -143,12 +149,9 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .title(if app.cc_pay.count > 0 {
                 let start = app.cc_pay.offset + 1;
                 let end = app.cc_pay.offset + app.cc_pay.items.len() as u64;
-                format!(
-                    "Credit Card Payments ({start}-{end} of {})",
-                    app.cc_pay.count
-                )
+                tf_paginated(app.locale, t(app.locale, "title.cc_payments"), start, end, app.cc_pay.count)
             } else {
-                "Credit Card Payments (0)".to_string()
+                format!("{} (0)", t(app.locale, "title.cc_payments"))
             }),
     )
     .row_highlight_style(
@@ -173,21 +176,22 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 )),
                 Line::from(format!(" {} | {}", format_brl(p.amount), p.description)),
                 Line::from(format!(
-                    " Created: {}",
+                    " {}: {}",
+                    t(app.locale, "detail.created"),
                     p.created_at.format("%d-%m-%Y %H:%M")
                 )),
                 Line::from(Span::styled(
-                    " [n] New  [d] Delete  [x] Export",
+                    format!(" {}", t(app.locale, "hint.cc_pay")),
                     Style::new().fg(Color::DarkGray),
                 )),
             ]
         }
-        None => vec![Line::from(" No payment selected.")],
+        None => vec![Line::from(format!(" {}", t(app.locale, "misc.no_sel.payment")))],
     };
 
     let detail_block = Block::default()
         .borders(Borders::ALL)
-        .title("Payment Details");
+        .title(t(app.locale, "title.payment_details"));
     let detail = Paragraph::new(detail_content).block(detail_block);
     frame.render_widget(detail, detail_area);
 }
@@ -209,11 +213,11 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .map(|a| a.name.as_str())
                     .collect();
                 render_selector(
-                    "Account",
+                    t(app.locale, "form.account"),
                     &names,
                     form.account_idx,
                     active,
-                    "no credit card accounts",
+                    t(app.locale, "misc.no_cc_accounts"),
                 )
             }
             CcPaymentField::Amount => form.amount.render_line(active),
@@ -226,7 +230,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("New Credit Card Payment");
+        .title(t(app.locale, "title.new_cc_payment"));
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -245,10 +249,10 @@ impl App {
                 let has_cc = self.accounts.iter().any(|a| a.has_credit_card);
                 if !has_cc {
                     self.status_message = Some(StatusMessage::error(
-                        "No account with credit card available",
+                        t(self.locale, "msg.no_cc_account"),
                     ));
                 } else {
-                    self.cc_pay.form = Some(CcPaymentForm::new_create());
+                    self.cc_pay.form = Some(CcPaymentForm::new_create(self.locale));
                     self.input_mode = InputMode::Editing;
                 }
             }
@@ -261,8 +265,9 @@ impl App {
                     let p_id = p.id;
                     let p_desc = p.description.clone();
                     self.confirm_action = Some(ConfirmAction::DeleteCreditCardPayment(p_id));
-                    self.confirm_popup =
-                        Some(ConfirmPopup::new(format!("Delete payment \"{}\"?", p_desc)));
+                    self.confirm_popup = Some(ConfirmPopup::new(
+                        crate::ui::i18n::tf_delete_payment(self.locale, &p_desc)
+                    ));
                 }
             }
             KeyCode::Char('x') => {
@@ -273,21 +278,21 @@ impl App {
                             acct_names.get(&id).cloned().unwrap_or_else(|| "?".into())
                         }) {
                             Ok(path) => {
-                                self.status_message = Some(StatusMessage::info(format!(
-                                    "Exported {} payments to {}",
-                                    all_payments.len(),
-                                    path.display()
-                                )));
+                                self.status_message = Some(StatusMessage::info(
+                                    crate::ui::i18n::tf_exported(self.locale, all_payments.len(), t(self.locale, "export.payments"), &path)
+                                ));
                             }
                             Err(e) => {
-                                self.status_message =
-                                    Some(StatusMessage::error(format!("Export failed: {e}")));
+                                self.status_message = Some(StatusMessage::error(
+                                    crate::ui::i18n::tf_export_failed(self.locale, &e)
+                                ));
                             }
                         }
                     }
                     Err(e) => {
-                        self.status_message =
-                            Some(StatusMessage::error(format!("Export failed: {e}")));
+                        self.status_message = Some(StatusMessage::error(
+                            crate::ui::i18n::tf_export_failed(self.locale, &e)
+                        ));
                     }
                 }
             }
@@ -342,7 +347,7 @@ impl App {
         use crate::db::credit_card_payments;
 
         let form = self.cc_pay.form.as_ref().unwrap();
-        let validated = match form.validate(&self.accounts) {
+        let validated = match form.validate(&self.accounts, self.locale) {
             Ok(v) => v,
             Err(e) => {
                 self.cc_pay.form.as_mut().unwrap().error = Some(e);

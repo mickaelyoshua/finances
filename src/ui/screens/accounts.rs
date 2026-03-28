@@ -23,6 +23,7 @@ use crate::{
             popup::ConfirmPopup,
             toggle::{push_form_error, render_toggle},
         },
+        i18n::{Locale, t},
     },
 };
 
@@ -66,17 +67,17 @@ pub struct ValidatedAccount {
 }
 
 impl AccountForm {
-    pub fn validate(&self) -> Result<ValidatedAccount, String> {
+    pub fn validate(&self, locale: Locale) -> Result<ValidatedAccount, String> {
         let name = self.name.value.trim().to_string();
         if name.is_empty() {
-            return Err("Name is required".into());
+            return Err(t(locale, "err.name_required").into());
         }
 
         let credit_limit = if self.has_credit_card {
             match self.credit_limit.value.trim().parse::<Decimal>() {
                 Ok(v) if v > Decimal::ZERO => Some(v),
-                Ok(_) => return Err("Credit limit must be positive".into()),
-                Err(_) => return Err("Invalid credit limit".into()),
+                Ok(_) => return Err(t(locale, "err.credit_limit_positive").into()),
+                Err(_) => return Err(t(locale, "err.invalid_credit_limit").into()),
             }
         } else {
             None
@@ -85,7 +86,7 @@ impl AccountForm {
         let billing_day = if self.has_credit_card {
             match self.billing_day.value.trim().parse::<i16>() {
                 Ok(v) if (1..=31).contains(&v) => Some(v),
-                _ => return Err("Billing day must be 1-31".into()),
+                _ => return Err(t(locale, "err.billing_day_range").into()),
             }
         } else {
             None
@@ -94,7 +95,7 @@ impl AccountForm {
         let due_day = if self.has_credit_card {
             match self.due_day.value.trim().parse::<i16>() {
                 Ok(v) if (1..=31).contains(&v) => Some(v),
-                _ => return Err("Due day must be 1-31".into()),
+                _ => return Err(t(locale, "err.due_day_range").into()),
             }
         } else {
             None
@@ -111,32 +112,32 @@ impl AccountForm {
         })
     }
 
-    pub fn new_create() -> Self {
+    pub fn new_create(locale: Locale) -> Self {
         Self {
             mode: AccountFormMode::Create,
-            name: InputField::new("Name"),
+            name: InputField::new(t(locale, "form.name")),
             account_type: AccountType::Checking,
             has_credit_card: false,
-            credit_limit: InputField::new("Credit Limit"),
-            billing_day: InputField::new("Billing Day"),
-            due_day: InputField::new("Due Day"),
+            credit_limit: InputField::new(t(locale, "form.credit_limit")),
+            billing_day: InputField::new(t(locale, "form.billing_day")),
+            due_day: InputField::new(t(locale, "form.due_day")),
             has_debit_card: false,
             active_field: 0,
             error: None,
         }
     }
 
-    pub fn new_edit(acc: &Account) -> Self {
+    pub fn new_edit(acc: &Account, locale: Locale) -> Self {
         Self {
             mode: AccountFormMode::Edit(acc.id),
-            name: InputField::new("Name").with_value(&acc.name),
+            name: InputField::new(t(locale, "form.name")).with_value(&acc.name),
             account_type: acc.parsed_type(),
             has_credit_card: acc.has_credit_card,
-            credit_limit: InputField::new("Credit Limit")
+            credit_limit: InputField::new(t(locale, "form.credit_limit"))
                 .with_value(acc.credit_limit.map(|v| v.to_string()).unwrap_or_default()),
-            billing_day: InputField::new("Billing Day")
+            billing_day: InputField::new(t(locale, "form.billing_day"))
                 .with_value(acc.billing_day.map(|v| v.to_string()).unwrap_or_default()),
-            due_day: InputField::new("Due Day")
+            due_day: InputField::new(t(locale, "form.due_day"))
                 .with_value(acc.due_day.map(|v| v.to_string()).unwrap_or_default()),
             has_debit_card: acc.has_debit_card,
             active_field: 0,
@@ -175,18 +176,21 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
 fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let header = Row::new([
-        "Account",
-        "Type",
-        "Credit Card",
-        "Debit",
-        "Checking",
-        "Credit Used",
+        t(app.locale, "header.account"),
+        t(app.locale, "header.type"),
+        t(app.locale, "header.credit_card"),
+        t(app.locale, "header.debit"),
+        t(app.locale, "header.checking"),
+        t(app.locale, "header.credit_used"),
     ])
     .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
     let [table_area, detail_area] =
         Layout::vertical([Constraint::Min(5), Constraint::Length(7)]).areas(area);
 
+    let yes = t(app.locale, "misc.yes");
+    let no = t(app.locale, "misc.no");
+    let free_label = t(app.locale, "misc.free");
     let rows: Vec<Row> = app
         .accounts
         .iter()
@@ -196,19 +200,20 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 let limit = acc.credit_limit.unwrap_or(Decimal::ZERO);
                 let free = limit - credit;
                 format!(
-                    "{} / {} ({} free)",
+                    "{} / {} ({} {})",
                     format_brl(credit),
                     format_brl(limit),
-                    format_brl(free)
+                    format_brl(free),
+                    free_label
                 )
             } else {
                 "-".to_string()
             };
             Row::new([
                 acc.name.clone(),
-                acc.parsed_type().label().to_string(),
-                if acc.has_credit_card { "Yes" } else { "No" }.to_string(),
-                if acc.has_debit_card { "Yes" } else { "No" }.to_string(),
+                app.locale.enum_label(acc.parsed_type().label()).to_string(),
+                if acc.has_credit_card { yes } else { no }.to_string(),
+                if acc.has_debit_card { yes } else { no }.to_string(),
                 format_brl(checking),
                 credit_cell,
             ])
@@ -227,7 +232,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         ],
     )
     .header(header)
-    .block(Block::default().borders(Borders::ALL).title("Accounts"))
+    .block(Block::default().borders(Borders::ALL).title(t(app.locale, "title.accounts")))
     .row_highlight_style(
         Style::new()
             .bg(Color::DarkGray)
@@ -245,40 +250,55 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             let methods: Vec<&str> = acc
                 .allowed_payment_methods()
                 .iter()
-                .map(|m| m.label())
+                .map(|m| app.locale.enum_label(m.label()))
                 .collect();
 
             let billing = if acc.has_credit_card {
                 format!(
-                    "Billing day: {} | Due day: {}",
+                    "{}: {} | {}: {}",
+                    t(app.locale, "detail.billing_day"),
                     acc.billing_day.unwrap_or(0),
+                    t(app.locale, "detail.due_day"),
                     acc.due_day.unwrap_or(0),
                 )
             } else {
-                "No credit card".to_string()
+                t(app.locale, "detail.no_credit_card").to_string()
             };
 
             vec![
                 Line::from(format!(
-                    " Name: {} | Type: {}",
+                    " {}: {} | {}: {}",
+                    t(app.locale, "detail.name"),
                     acc.name,
-                    acc.parsed_type().label()
+                    t(app.locale, "detail.type"),
+                    app.locale.enum_label(acc.parsed_type().label())
                 )),
                 Line::from(format!(" {}", billing)),
-                Line::from(format!(" Payment methods: {}", methods.join(", "))),
-                Line::from(format!(" Created: {}", acc.created_at.format("%d-%m-%Y"))),
+                Line::from(format!(
+                    " {}: {}",
+                    t(app.locale, "detail.payment_methods"),
+                    methods.join(", ")
+                )),
+                Line::from(format!(
+                    " {}: {}",
+                    t(app.locale, "detail.created"),
+                    acc.created_at.format("%d-%m-%Y")
+                )),
                 Line::from(Span::styled(
-                    " [n] New  [e] Edit  [d] Deactivate  [x] Export",
+                    format!(" {}", t(app.locale, "hint.acct")),
                     Style::new().fg(Color::DarkGray),
                 )),
             ]
         }
-        None => vec![Line::from(" No account selected.")],
+        None => vec![Line::from(format!(
+            " {}",
+            t(app.locale, "misc.no_sel.account")
+        ))],
     };
 
     let detail_block = Block::default()
         .borders(Borders::ALL)
-        .title("Account Details");
+        .title(t(app.locale, "title.account_details"));
     let detail = Paragraph::new(detail_content).block(detail_block);
 
     frame.render_widget(detail, detail_area);
@@ -296,7 +316,7 @@ impl App {
                 move_table_selection(&mut self.acct.table_state, self.accounts.len(), 1);
             }
             KeyCode::Char('n') => {
-                self.acct.form = Some(AccountForm::new_create());
+                self.acct.form = Some(AccountForm::new_create(self.locale));
                 self.input_mode = InputMode::Editing;
             }
             KeyCode::Char('e') => {
@@ -305,7 +325,7 @@ impl App {
                     .selected()
                     .and_then(|i| self.accounts.get(i))
                 {
-                    self.acct.form = Some(AccountForm::new_edit(acc));
+                    self.acct.form = Some(AccountForm::new_edit(acc, self.locale));
                     self.input_mode = InputMode::Editing;
                 }
             }
@@ -317,29 +337,23 @@ impl App {
                 {
                     let acc_id = acc.id;
                     let acc_name = acc.name.clone();
-                    if crate::db::accounts::has_references(&self.pool, acc_id).await? {
-                        self.confirm_action = Some(ConfirmAction::DeactivateAccount(acc_id));
-                        self.confirm_popup = Some(ConfirmPopup::new(format!(
-                            "Deactivate \"{}\"? It has existing transactions/transfers.",
-                            acc_name
-                        )));
-                    } else {
-                        self.confirm_action = Some(ConfirmAction::DeactivateAccount(acc_id));
-                        self.confirm_popup =
-                            Some(ConfirmPopup::new(format!("Deactivate \"{}\"?", acc_name)));
-                    }
+                    let has_refs = crate::db::accounts::has_references(&self.pool, acc_id).await?;
+                    self.confirm_action = Some(ConfirmAction::DeactivateAccount(acc_id));
+                    self.confirm_popup = Some(ConfirmPopup::new(
+                        crate::ui::i18n::tf_deactivate(self.locale, &acc_name, has_refs)
+                    ));
                 }
             }
             KeyCode::Char('x') => match crate::export::export_accounts(&self.accounts) {
                 Ok(path) => {
-                    self.status_message = Some(StatusMessage::info(format!(
-                        "Exported {} accounts to {}",
-                        self.accounts.len(),
-                        path.display()
-                    )));
+                    self.status_message = Some(StatusMessage::info(
+                        crate::ui::i18n::tf_exported(self.locale, self.accounts.len(), t(self.locale, "export.accounts"), &path)
+                    ));
                 }
                 Err(e) => {
-                    self.status_message = Some(StatusMessage::error(format!("Export failed: {e}")));
+                    self.status_message = Some(StatusMessage::error(
+                        crate::ui::i18n::tf_export_failed(self.locale, &e)
+                    ));
                 }
             },
             _ => {}
@@ -400,7 +414,7 @@ impl App {
         use crate::db::accounts;
 
         let form = self.acct.form.as_ref().unwrap();
-        let validated = match form.validate() {
+        let validated = match form.validate(self.locale) {
             Ok(v) => v,
             Err(e) => {
                 self.acct.form.as_mut().unwrap().error = Some(e);
@@ -426,19 +440,17 @@ impl App {
 
                     if type_changed && !used.is_empty() {
                         self.acct.form.as_mut().unwrap().error =
-                            Some("Cannot change account type: account has transactions".into());
+                            Some(t(self.locale, "err.cannot_change_acct_type").into());
                         return Ok(());
                     }
                     if credit_removed && used.iter().any(|m| m == "credit") {
-                        self.acct.form.as_mut().unwrap().error = Some(
-                            "Cannot disable credit card: account has credit transactions".into(),
-                        );
+                        self.acct.form.as_mut().unwrap().error =
+                            Some(t(self.locale, "err.cannot_disable_credit").into());
                         return Ok(());
                     }
                     if debit_removed && used.iter().any(|m| m == "debit") {
-                        self.acct.form.as_mut().unwrap().error = Some(
-                            "Cannot disable debit card: account has debit transactions".into(),
-                        );
+                        self.acct.form.as_mut().unwrap().error =
+                            Some(t(self.locale, "err.cannot_disable_debit").into());
                         return Ok(());
                     }
                 }
@@ -513,14 +525,14 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                 active,
             ),
             AccountField::HasCreditCard => render_toggle(
-                "Credit Card",
-                &["No", "Yes"],
+                t(app.locale, "form.credit_card"),
+                &[t(app.locale, "misc.no"), t(app.locale, "misc.yes")],
                 if form.has_credit_card { 1 } else { 0 },
                 active,
             ),
             AccountField::HasDebitCard => render_toggle(
-                "Debit Card",
-                &["No", "Yes"],
+                t(app.locale, "form.debit_card"),
+                &[t(app.locale, "misc.no"), t(app.locale, "misc.yes")],
                 if form.has_debit_card { 1 } else { 0 },
                 active,
             ),
