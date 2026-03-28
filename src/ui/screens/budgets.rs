@@ -260,7 +260,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .categories
                     .iter()
                     .filter(|c| c.parsed_type() == CategoryType::Expense)
-                    .map(|c| c.name.as_str())
+                    .map(|c| c.localized_name(app.locale))
                     .collect();
                 if is_edit {
                     Line::from(format!(

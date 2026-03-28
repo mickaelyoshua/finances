@@ -3,6 +3,8 @@ use std::fmt;
 use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 
+use crate::ui::i18n::Locale;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CategoryType {
     Expense,
@@ -55,5 +57,15 @@ pub struct Category {
 impl Category {
     pub fn parsed_type(&self) -> CategoryType {
         self.category_type.parse().unwrap_or(CategoryType::Expense)
+    }
+
+    /// Return the category name in the active locale (PT name_pt → EN name).
+    pub fn localized_name(&self, locale: Locale) -> &str {
+        if locale == Locale::Pt {
+            if let Some(pt) = &self.name_pt {
+                return pt.as_str();
+            }
+        }
+        &self.name
     }
 }

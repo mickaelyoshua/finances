@@ -528,7 +528,7 @@ fn render_filter_bar(frame: &mut Frame, area: Rect, app: &mut App) {
                 filter
                     .category_idx
                     .and_then(|i| app.categories.get(i))
-                    .map(|c| c.name.as_str())
+                    .map(|c| c.localized_name(app.locale))
                     .unwrap_or(all),
             ),
             FilterField::TransactionType => (
@@ -632,7 +632,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .categories
                     .iter()
                     .filter(|c| c.parsed_type() == form.transaction_type.category_type())
-                    .map(|c| c.name.as_str())
+                    .map(|c| c.localized_name(app.locale))
                     .collect();
                 render_selector(t(app.locale, "form.category"), &filtered, form.category_idx, active, t(app.locale, "misc.none"))
             }

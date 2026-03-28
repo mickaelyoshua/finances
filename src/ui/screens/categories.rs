@@ -132,7 +132,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .map(|cat| {
             Row::new([
-                cat.name.clone(),
+                cat.localized_name(app.locale).to_string(),
                 app.locale.enum_label(cat.parsed_type().label()).to_string(),
                 cat.created_at.format("%d-%m-%Y").to_string(),
             ])
@@ -166,7 +166,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             Line::from(format!(
                 " {}: {} | {}: {}",
                 t(app.locale, "detail.name"),
-                cat.name,
+                cat.localized_name(app.locale),
                 t(app.locale, "detail.type"),
                 app.locale.enum_label(cat.parsed_type().label())
             )),
