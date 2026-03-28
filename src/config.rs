@@ -20,6 +20,10 @@ pub struct Config {
     /// Connect to the production database (.env.prod) instead of local dev (.env)
     #[arg(long)]
     pub prod: bool,
+
+    /// Language for desktop notifications: "en" (default) or "pt"
+    #[arg(long, default_value = "en", value_parser = clap::builder::PossibleValuesParser::new(["en", "pt"]))]
+    pub lang: String,
 }
 
 pub fn database_url(prod: bool) -> String {

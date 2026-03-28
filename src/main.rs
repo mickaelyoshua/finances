@@ -13,6 +13,7 @@
 use finances::config;
 use finances::db;
 use finances::ui;
+use finances::ui::i18n::{Locale, t};
 
 use std::time::Duration;
 
@@ -48,13 +49,15 @@ async fn main() -> anyhow::Result<()> {
 
     if cfg.notify {
         info!("running notification checks");
+        // --lang only affects --notify (cron); the TUI uses Ctrl+L runtime toggle
+        let locale = if cfg.lang == "pt" { Locale::Pt } else { Locale::En };
         let today = Local::now().date_naive();
         let mut messages: Vec<String> = Vec::new();
 
         // 1. No transactions today
         let has_entries = db::transactions::has_transactions_today(&pool, today).await?;
         if !has_entries {
-            let msg = "You haven't logged any transactions today!".to_string();
+            let msg = t(locale, "notif.no_txn_today").to_string();
             db::notifications::upsert(
                 &pool,
                 &msg,
@@ -69,7 +72,8 @@ async fn main() -> anyhow::Result<()> {
         let pending = db::recurring::list_pending(&pool, today).await?;
         for r in &pending {
             let msg = format!(
-                "Overdue: {} — {}",
+                "{}: {} — {}",
+                t(locale, "notif.overdue"),
                 r.description,
                 ui::components::format::format_brl(r.amount),
             );
@@ -117,31 +121,41 @@ async fn main() -> anyhow::Result<()> {
             let cat_name = categories
                 .iter()
                 .find(|c| c.id == b.category_id)
-                .map(|c| c.name.as_str())
+                .map(|c| {
+                    if locale == Locale::Pt {
+                        c.name_pt.as_deref().unwrap_or(&c.name)
+                    } else {
+                        &c.name
+                    }
+                })
                 .unwrap_or("?");
-            let period = b.parsed_period().label();
+            let period = locale.enum_label(b.parsed_period().label());
 
             // Find the highest crossed threshold only
             if pct_u32 > 100 {
                 let ntype = finances::models::NotificationType::BudgetExceeded;
                 db::notifications::clear_stale_budget_notifications(&pool, b.id, ntype).await?;
                 let msg = format!(
-                    "Budget '{}' ({}) EXCEEDED — {}/{}",
+                    "{} '{}' ({}) {} — {}/{}",
+                    t(locale, "title.budgets"),
                     cat_name,
                     period,
+                    t(locale, "notif.budget_exceeded"),
                     ui::components::format::format_brl(spent),
                     ui::components::format::format_brl(b.amount),
                 );
                 db::notifications::upsert(&pool, &msg, ntype, Some(b.id)).await?;
                 messages.push(msg);
             } else if let Some(&(threshold, ntype)) =
-                thresholds.iter().rev().find(|(t, _)| pct_u32 >= *t)
+                thresholds.iter().rev().find(|(thr, _)| pct_u32 >= *thr)
             {
                 db::notifications::clear_stale_budget_notifications(&pool, b.id, ntype).await?;
                 let msg = format!(
-                    "Budget '{}' ({}) reached {}% — {}/{}",
+                    "{} '{}' ({}) {} {}% — {}/{}",
+                    t(locale, "title.budgets"),
                     cat_name,
                     period,
+                    t(locale, "notif.budget_reached"),
                     threshold,
                     ui::components::format::format_brl(spent),
                     ui::components::format::format_brl(b.amount),
@@ -156,7 +170,7 @@ async fn main() -> anyhow::Result<()> {
             let body = messages.join("\n");
             info!(count = messages.len(), "sending notifications");
             notify_rust::Notification::new()
-                .summary("Finances")
+                .summary(t(locale, "notif.summary"))
                 .body(&body)
                 .show()?;
         }
