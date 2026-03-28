@@ -552,6 +552,33 @@ async fn has_transactions_today_false() {
 }
 
 #[tokio::test]
+async fn has_transactions_today_ignores_installments() {
+    let (_guard, pool) = setup().await;
+    let acc = make_checking(&pool, "Nubank").await;
+    let cat = make_expense_category(&pool, "Food").await;
+
+    // Create an installment purchase starting today — generates child transactions
+    installments::create_installment_purchase(
+        &pool,
+        dec!(120),
+        3,
+        "Test installment",
+        cat.id,
+        acc.id,
+        date(2026, 3, 13),
+    )
+    .await
+    .unwrap();
+
+    // Installment-generated transactions should NOT count as manual activity
+    assert!(
+        !transactions::has_transactions_today(&pool, date(2026, 3, 13))
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
 async fn sum_expenses_by_category_sums_only_expenses() {
     let (_guard, pool) = setup().await;
     let acc = make_checking(&pool, "Nubank").await;
