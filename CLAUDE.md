@@ -54,9 +54,20 @@ in-place and will be used on the next startup.
 - **Logging**: tracing with daily-rotating file appender in `~/.local/share/finances/`
 - **Exports**: CSV files written to `~/.local/share/finances/exports/`
 
+## i18n (Internationalization)
+
+- **Languages**: English (default) and Brazilian Portuguese
+- **Runtime toggle**: `Ctrl+L` in the TUI switches `App.locale` between `Locale::En` and `Locale::Pt`
+- **CLI flag**: `--lang pt` sets the locale for `--notify` mode only (desktop notifications via cron)
+- **Module**: `src/ui/i18n.rs` — `t(locale, key)` for static strings, `tf_*()` format helpers for dynamic messages
+- **Enum labels**: `Locale::enum_label(en_label)` translates `.label()` output at the UI layer without changing `Display`/`FromStr` impls (which double as DB values)
+- **Category names**: `categories.name_pt` DB column; `App::category_name_localized()` picks PT→EN→"?" fallback
+- **Help popup**: `?` key opens per-screen bilingual help overlay (`src/ui/components/help_popup.rs`)
+- **Adding a new string**: add the key to both `t_en()` and `t_pt()` in `i18n.rs`; for dynamic messages, add a `tf_*()` helper
+
 ## Database
 
 - 9 tables: accounts, categories, transactions, transfers, credit_card_payments, installment_purchases, budgets, recurring_transactions, notifications
 - Local: `finances/finances@localhost:5432/finances` (docker-compose)
 - Production: Neon free tier with TLS (`tls-rustls` feature in sqlx)
-- Migration files: `migrations/20260305_initial.sql`, `migrations/20260320_add_indexes.sql`
+- Migration files: `migrations/20260305_initial.sql`, `migrations/20260320_add_indexes.sql`, `migrations/20260326_add_category_name_pt.sql`
