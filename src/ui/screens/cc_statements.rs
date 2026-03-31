@@ -837,16 +837,11 @@ impl App {
             let cc_accounts: Vec<&Account> =
                 self.accounts.iter().filter(|a| a.has_credit_card).collect();
             if let Some(account) = cc_accounts.get(self.cc_stmt.account_idx - 1) {
-                let end = if stmt.is_current {
-                    Local::now().date_naive()
-                } else {
-                    stmt.period_end
-                };
                 self.cc_stmt.detail_txns = db::transactions::list_credit_by_account(
                     &self.pool,
                     account.id,
                     stmt.period_start,
-                    end,
+                    stmt.period_end,
                 )
                 .await?;
                 self.cc_stmt.detail_table_state.select(
