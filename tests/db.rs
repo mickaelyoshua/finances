@@ -2282,6 +2282,47 @@ async fn build_statements_payment_attribution() {
     }
 }
 
+#[tokio::test]
+async fn build_statements_payment_on_close_day_is_attributed() {
+    // Regression: when a statement closes today and the payment date is period_end+1
+    // (tomorrow), the payment was not attributed because the attribution window
+    // upper bound was `today` instead of the next closing date.
+    let (_guard, pool) = setup().await;
+
+    // billing_day=1 so that today (April 1) is exactly the latest closing date
+    let acc = accounts::create_account(
+        &pool,
+        &accounts::AccountParams {
+            name: "CC Close-Day".to_string(),
+            account_type: AccountType::Checking,
+            has_credit_card: true,
+            credit_limit: Some(dec!(5000)),
+            billing_day: Some(1),
+            due_day: Some(10),
+            has_debit_card: false,
+        },
+    ).await.unwrap();
+    let cat = make_expense_category(&pool, "Shopping").await;
+
+    // Charge in March (before April 1 close)
+    make_txn(&pool, dec!(200), "march purchase", cat.id, acc.id, TransactionType::Expense, PaymentMethod::Credit, date(2026, 3, 15)).await;
+
+    // Payment on April 2 (period_end + 1), simulating the "Pay Statement" action
+    credit_card_payments::create_payment(&pool, acc.id, dec!(200), date(2026, 4, 2), "pay march stmt").await.unwrap();
+
+    use finances::ui::screens::cc_statements::build_statements;
+    let (stmts, _) = build_statements(&pool, &acc, 6).await.unwrap();
+
+    let march_stmt = stmts.iter().find(|s| {
+        s.period_end.month() == 4 && s.period_end.day() == 1 && !s.is_current && !s.is_upcoming
+    });
+    assert!(march_stmt.is_some(), "Should find the closed statement ending April 1");
+    let s = march_stmt.unwrap();
+    assert_eq!(s.statement_total, dec!(200));
+    assert_eq!(s.paid_amount, dec!(200), "Payment on period_end+1 should be attributed to this statement");
+    assert_eq!(s.balance_due(), dec!(0));
+}
+
 // ═══════════════════════════════════════
 // CONFIRM RECURRING (atomicity)
 // ═══════════════════════════════════════

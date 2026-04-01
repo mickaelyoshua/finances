@@ -210,8 +210,12 @@ pub async fn build_statements(
     // For each closed period, payment window is (close_date+1 .. next_newer_close_date).
     // For the latest closed statement, window extends to today.
     {
-        // Build a sorted list of closing dates (ascending) for payment window lookup
+        // Build a sorted list of closing dates (ascending) for payment window lookup.
+        // Include current_close so the latest closed statement's window extends to
+        // the next billing cycle instead of just `today` (fixes payments on period_end+1
+        // when the statement closes today).
         let mut sorted_closes: Vec<NaiveDate> = closing_dates.clone();
+        sorted_closes.push(current_close);
         sorted_closes.sort();
 
         for payment in &payments {

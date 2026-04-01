@@ -501,15 +501,12 @@ impl App {
 
             let latest_close = latest_closing_date(today, billing_day);
             let current_start = latest_close.succ_opt().unwrap();
-            if current_start > today {
-                continue;
-            }
 
             let (next_y, next_m) = next_month(latest_close.year(), latest_close.month());
             let next_close = clamped_day(next_y, next_m, billing_day);
             let due = statement_due_date(next_y, next_m, billing_day, due_day);
 
-            ranges.push((acc.id, current_start, today));
+            ranges.push((acc.id, current_start, next_close));
             acc_infos.push(AccInfo {
                 name: acc.name.clone(),
                 id: acc.id,
