@@ -167,10 +167,16 @@ pub async fn delete_transaction(pool: &PgPool, id: i32) -> Result<(), sqlx::Erro
 }
 
 pub async fn has_transactions_today(pool: &PgPool, today: NaiveDate) -> Result<bool, sqlx::Error> {
-    let row: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM transactions WHERE date = $1 AND installment_purchase_id IS NULL)")
-        .bind(today)
-        .fetch_one(pool)
-        .await?;
+    let row: (bool,) = sqlx::query_as(
+        "SELECT EXISTS(
+            SELECT 1 FROM transactions WHERE created_at::date = $1 AND installment_purchase_id IS NULL
+            UNION ALL
+            SELECT 1 FROM installment_purchases WHERE created_at::date = $1
+        )",
+    )
+    .bind(today)
+    .fetch_one(pool)
+    .await?;
     Ok(row.0)
 }
 

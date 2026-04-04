@@ -521,7 +521,9 @@ async fn has_transactions_today_true() {
     let (_guard, pool) = setup().await;
     let acc = make_checking(&pool, "Nubank").await;
     let cat = make_expense_category(&pool, "Food").await;
+    let today = chrono::Local::now().date_naive();
 
+    // Transaction dated yesterday but created today — should still count
     make_txn(
         &pool,
         dec!(10),
@@ -530,12 +532,12 @@ async fn has_transactions_today_true() {
         acc.id,
         TransactionType::Expense,
         PaymentMethod::Pix,
-        date(2026, 3, 13),
+        today - chrono::Duration::days(1),
     )
     .await;
 
     assert!(
-        transactions::has_transactions_today(&pool, date(2026, 3, 13))
+        transactions::has_transactions_today(&pool, today)
             .await
             .unwrap()
     );
@@ -544,20 +546,22 @@ async fn has_transactions_today_true() {
 #[tokio::test]
 async fn has_transactions_today_false() {
     let (_guard, pool) = setup().await;
+    let today = chrono::Local::now().date_naive();
     assert!(
-        !transactions::has_transactions_today(&pool, date(2026, 3, 13))
+        !transactions::has_transactions_today(&pool, today)
             .await
             .unwrap()
     );
 }
 
 #[tokio::test]
-async fn has_transactions_today_ignores_installments() {
+async fn has_transactions_today_installment_purchase_counts() {
     let (_guard, pool) = setup().await;
     let acc = make_checking(&pool, "Nubank").await;
     let cat = make_expense_category(&pool, "Food").await;
+    let today = chrono::Local::now().date_naive();
 
-    // Create an installment purchase starting today — generates child transactions
+    // Creating an installment purchase today counts as activity
     installments::create_installment_purchase(
         &pool,
         dec!(120),
@@ -570,9 +574,8 @@ async fn has_transactions_today_ignores_installments() {
     .await
     .unwrap();
 
-    // Installment-generated transactions should NOT count as manual activity
     assert!(
-        !transactions::has_transactions_today(&pool, date(2026, 3, 13))
+        transactions::has_transactions_today(&pool, today)
             .await
             .unwrap()
     );
