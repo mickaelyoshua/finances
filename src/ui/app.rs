@@ -41,8 +41,8 @@ use super::screens::{
     categories::CategoryForm,
     cc_payments::CcPaymentForm,
     cc_statements::{CreditCardStatement, StatementsView},
-    installments::InstallmentForm,
     recurring::RecurringForm,
+    transactions::InstallmentForm,
     transfers::TransferForm,
 };
 
@@ -53,7 +53,6 @@ pub enum Screen {
     Accounts,
     Budgets,
     Categories,
-    Installments,
     Recurring,
     Transfers,
     CreditCardPayments,
@@ -61,13 +60,12 @@ pub enum Screen {
 }
 
 impl Screen {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 9] = [
         Self::Dashboard,
         Self::Transactions,
         Self::Accounts,
         Self::Budgets,
         Self::Categories,
-        Self::Installments,
         Self::Recurring,
         Self::Transfers,
         Self::CreditCardPayments,
@@ -81,7 +79,6 @@ impl Screen {
             Self::Accounts => "Accounts",
             Self::Budgets => "Budgets",
             Self::Categories => "Categories",
-            Self::Installments => "Installments",
             Self::Recurring => "Recurring",
             Self::Transfers => "Transfers",
             Self::CreditCardPayments => "CC Payments",
@@ -96,7 +93,6 @@ impl Screen {
             Self::Accounts => "screen.accounts",
             Self::Budgets => "screen.budgets",
             Self::Categories => "screen.categories",
-            Self::Installments => "screen.installments",
             Self::Recurring => "screen.recurring",
             Self::Transfers => "screen.transfers",
             Self::CreditCardPayments => "screen.cc_payments",
@@ -185,6 +181,7 @@ pub struct TransactionScreenState {
     pub items: Vec<Transaction>,
     pub table_state: TableState,
     pub form: Option<TransactionForm>,
+    pub inst_form: Option<InstallmentForm>,
     pub offset: u64,
     pub count: u64,
     pub filter: TransactionFilter,
@@ -205,12 +202,6 @@ pub struct BudgetScreenState {
     pub spent: HashMap<i32, Decimal>,
     pub table_state: TableState,
     pub form: Option<BudgetForm>,
-}
-
-pub struct InstallmentScreenState {
-    pub items: Vec<InstallmentPurchase>,
-    pub table_state: TableState,
-    pub form: Option<InstallmentForm>,
 }
 
 pub struct RecurringScreenState {
@@ -270,13 +261,15 @@ pub struct App {
     pub account_names: HashMap<i32, String>,
     pub category_names: HashMap<i32, String>,
 
+    // Installment purchases cache (used by transactions screen for group edit)
+    pub installment_purchases: Vec<InstallmentPurchase>,
+
     // Per-screen state
     pub dashboard: DashboardState,
     pub txn: TransactionScreenState,
     pub acct: AccountScreenState,
     pub cat: CategoryScreenState,
     pub budget: BudgetScreenState,
-    pub inst: InstallmentScreenState,
     pub recur: RecurringScreenState,
     pub xfer: TransferScreenState,
     pub cc_pay: CcPaymentScreenState,
@@ -303,6 +296,7 @@ impl App {
             balances: HashMap::new(),
             account_names: HashMap::new(),
             category_names: HashMap::new(),
+            installment_purchases: Vec::new(),
 
             dashboard: DashboardState {
                 current_statements: Vec::new(),
@@ -313,6 +307,7 @@ impl App {
                 items: Vec::new(),
                 table_state: TableState::default().with_selected(0),
                 form: None,
+                inst_form: None,
                 offset: 0,
                 count: 0,
                 filter: TransactionFilter::new(Locale::default()),
@@ -328,11 +323,6 @@ impl App {
             budget: BudgetScreenState {
                 items: Vec::new(),
                 spent: HashMap::new(),
-                table_state: TableState::default().with_selected(0),
-                form: None,
-            },
-            inst: InstallmentScreenState {
-                items: Vec::new(),
                 table_state: TableState::default().with_selected(0),
                 form: None,
             },
@@ -454,7 +444,7 @@ impl App {
         self.budget.spent = budget_spent_map;
         self.recur.pending = pending;
         self.recur.list = rec_list;
-        self.inst.items = inst_list;
+        self.installment_purchases = inst_list;
         self.xfer.items = transfer_list;
         self.xfer.count = transfer_cnt;
         self.cc_pay.items = cc_list;
@@ -621,7 +611,7 @@ impl App {
     }
 
     pub async fn refresh_installments(&mut self) -> anyhow::Result<()> {
-        self.inst.items =
+        self.installment_purchases =
             crate::db::installments::list_installment_purchases(&self.pool).await?;
         Ok(())
     }
@@ -776,11 +766,10 @@ impl App {
                 let i = (c as usize) - ('1' as usize);
                 if let Some(&screen) = Screen::ALL.get(i) {
                     self.screen = screen;
+                    if screen == Screen::CreditCardStatements {
+                        self.load_cc_statements().await?;
+                    }
                 }
-            }
-            KeyCode::Char('0') => {
-                self.screen = Screen::CreditCardStatements;
-                self.load_cc_statements().await?;
             }
             KeyCode::Left | KeyCode::Char('h')
                 if key.code == KeyCode::Left || self.screen != Screen::CreditCardStatements =>
@@ -811,7 +800,6 @@ impl App {
                 Screen::Categories => self.handle_categories_key(key.code).await?,
                 Screen::Transactions => self.handle_transactions_key(key.code).await?,
                 Screen::Budgets => self.handle_budgets_key(key.code).await?,
-                Screen::Installments => self.handle_installments_key(key.code).await?,
                 Screen::Recurring => self.handle_recurring_key(key.code).await?,
                 Screen::Transfers => self.handle_transfers_key(key.code).await?,
                 Screen::CreditCardPayments => self.handle_cc_payments_key(key.code).await?,
@@ -832,9 +820,6 @@ impl App {
             Screen::Accounts => Some((&mut self.acct.table_state, self.accounts.len())),
             Screen::Budgets => Some((&mut self.budget.table_state, self.budget.items.len())),
             Screen::Categories => Some((&mut self.cat.table_state, self.categories.len())),
-            Screen::Installments => {
-                Some((&mut self.inst.table_state, self.inst.items.len()))
-            }
             Screen::Recurring => Some((&mut self.recur.table_state, self.recur.list.len())),
             Screen::Transfers => Some((&mut self.xfer.table_state, self.xfer.items.len())),
             Screen::CreditCardPayments => {
@@ -880,8 +865,14 @@ impl App {
 
     async fn handle_editing_key(&mut self, key: KeyEvent) -> anyhow::Result<()> {
         if key.code == KeyCode::Esc {
-            // If installment form is confirming, dismiss confirmation only
-            if let Some(form) = &mut self.inst.form
+            // If installment confirmation is showing, dismiss confirmation only
+            if let Some(form) = &mut self.txn.inst_form
+                && form.confirmation.is_some()
+            {
+                form.confirmation = None;
+                return Ok(());
+            }
+            if let Some(form) = &mut self.txn.form
                 && form.confirmation.is_some()
             {
                 form.confirmation = None;
@@ -890,8 +881,8 @@ impl App {
             self.acct.form = None;
             self.cat.form = None;
             self.txn.form = None;
+            self.txn.inst_form = None;
             self.budget.form = None;
-            self.inst.form = None;
             self.recur.form = None;
             self.xfer.form = None;
             self.cc_pay.form = None;
@@ -903,12 +894,12 @@ impl App {
                 self.submit_account_form().await?;
             } else if self.cat.form.is_some() {
                 self.submit_category_form().await?;
+            } else if self.txn.inst_form.is_some() {
+                self.submit_installment_form().await?;
             } else if self.txn.form.is_some() {
                 self.submit_transaction_form().await?;
             } else if self.budget.form.is_some() {
                 self.submit_budget_form().await?;
-            } else if self.inst.form.is_some() {
-                self.submit_installment_form().await?;
             } else if self.recur.form.is_some() {
                 self.submit_recurring_form().await?;
             } else if self.xfer.form.is_some() {
@@ -923,12 +914,12 @@ impl App {
             self.handle_account_form_key(key.code);
         } else if self.cat.form.is_some() {
             self.handle_category_form_key(key.code);
+        } else if self.txn.inst_form.is_some() {
+            self.handle_installment_form_key(key.code);
         } else if self.txn.form.is_some() {
             self.handle_transaction_form_key(key.code);
         } else if self.budget.form.is_some() {
             self.handle_budget_form_key(key.code);
-        } else if self.inst.form.is_some() {
-            self.handle_installment_form_key(key.code);
         } else if self.recur.form.is_some() {
             self.handle_recurring_form_key(key.code);
         } else if self.xfer.form.is_some() {

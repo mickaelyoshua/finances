@@ -92,6 +92,7 @@ fn t_en(key: &'static str) -> &'static str {
         "form.installments" => "Installments",
         "form.next_due" => "Next Due",
         "form.total_amount" => "Total Amount",
+        "form.is_installment" => "Installment",
 
         // ── Form selector/toggle labels ──
         "form.type" => "Type",
@@ -210,7 +211,7 @@ fn t_en(key: &'static str) -> &'static str {
         "msg.create_expense_cat_first" => "Create an expense category first",
         "msg.no_cc_account" => "No account with credit card available",
         "msg.need_two_accounts" => "Need at least 2 accounts for a transfer",
-        "msg.installment_managed" => "Installment transactions are managed from the Installments screen",
+        "msg.installment_edit_hint" => "Press [e] to edit or [d] to delete the installment group",
         "msg.select_account_view" => "Select a specific account to view transactions",
         "msg.select_account_pay" => "Select a specific account to pay a statement",
         "msg.select_account_unpay" => "Select a specific account to unpay a statement",
@@ -356,6 +357,7 @@ fn t_pt(key: &'static str) -> Option<&'static str> {
         "form.installments" => "Parcelas",
         "form.next_due" => "Próximo Venc.",
         "form.total_amount" => "Valor Total",
+        "form.is_installment" => "Parcelado",
 
         // ── Form selector/toggle labels ──
         "form.type" => "Tipo",
@@ -474,7 +476,7 @@ fn t_pt(key: &'static str) -> Option<&'static str> {
         "msg.create_expense_cat_first" => "Crie uma categoria de despesa primeiro",
         "msg.no_cc_account" => "Nenhuma conta com cartão de crédito disponível",
         "msg.need_two_accounts" => "Necessário pelo menos 2 contas para transferência",
-        "msg.installment_managed" => "Transações parceladas são gerenciadas na tela de Parcelamentos",
+        "msg.installment_edit_hint" => "Pressione [e] para editar ou [d] para excluir o grupo de parcelas",
         "msg.select_account_view" => "Selecione uma conta específica para ver transações",
         "msg.select_account_pay" => "Selecione uma conta específica para pagar fatura",
         "msg.select_account_unpay" => "Selecione uma conta específica para estornar pagamento",

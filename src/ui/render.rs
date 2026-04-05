@@ -3,7 +3,7 @@
 //! Layout (top to bottom): **tab bar** → **content** → **status bar**.
 //! A [`ConfirmPopup`] renders as a centered overlay on top of everything.
 //!
-//! The tab bar auto-scrolls when the terminal is too narrow to show all 10
+//! The tab bar auto-scrolls when the terminal is too narrow to show all 9
 //! tabs at once, keeping the active tab visible with `◀`/`▶` overflow
 //! indicators on the edges.
 
@@ -143,7 +143,6 @@ fn render_content(frame: &mut Frame, area: Rect, app: &mut App) {
         Screen::Categories => super::screens::categories::render(frame, area, app),
         Screen::Transactions => super::screens::transactions::render(frame, area, app),
         Screen::Budgets => super::screens::budgets::render(frame, area, app),
-        Screen::Installments => super::screens::installments::render(frame, area, app),
         Screen::Recurring => super::screens::recurring::render(frame, area, app),
         Screen::Transfers => super::screens::transfers::render(frame, area, app),
         Screen::CreditCardPayments => super::screens::cc_payments::render(frame, area, app),
@@ -206,7 +205,7 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
             spans.extend([
                 Span::styled(" q", Style::new().fg(Color::Yellow)),
                 Span::raw(format!(" {} ", t(l, "status.quit"))),
-                Span::styled("0-9", Style::new().fg(Color::Yellow)),
+                Span::styled("1-9", Style::new().fg(Color::Yellow)),
                 Span::raw(format!(" {} ", t(l, "status.screen"))),
                 Span::styled("← →", Style::new().fg(Color::Yellow)),
                 Span::raw(format!(" {}", t(l, "status.navigate"))),

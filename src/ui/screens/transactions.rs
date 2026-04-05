@@ -1,4 +1,4 @@
-use chrono::{Local, NaiveDate};
+use chrono::{Datelike, Local, NaiveDate};
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
@@ -11,8 +11,9 @@ use rust_decimal::Decimal;
 use tracing::{debug, info};
 
 use crate::{
-    db::transactions::TransactionFilterParams,
-    models::{Account, Category, PaymentMethod, Transaction, TransactionType},
+    db::{self, clamped_day, latest_closing_date, next_month, statement_due_date,
+         transactions::TransactionFilterParams},
+    models::{Account, Category, CategoryType, InstallmentPurchase, PaymentMethod, Transaction, TransactionType},
     ui::{
         App,
         app::{
@@ -22,11 +23,14 @@ use crate::{
         components::{
             format::{format_brl, parse_positive_amount},
             input::InputField,
+            popup::ConfirmPopup,
             toggle::{push_form_error, render_selector, render_toggle},
         },
         i18n::{Locale, t, tf_paginated},
     },
 };
+
+// ── Transaction form types ───────────────────────────────────────
 
 pub enum TransactionFormMode {
     Create,
@@ -38,6 +42,8 @@ pub enum TransactionField {
     Date,
     Description,
     Amount,
+    IsInstallment,
+    InstallmentCount,
     TransactionType,
     Account,
     PaymentMethod,
@@ -45,10 +51,12 @@ pub enum TransactionField {
 }
 
 impl TransactionField {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Date,
         Self::Description,
         Self::Amount,
+        Self::IsInstallment,
+        Self::InstallmentCount,
         Self::TransactionType,
         Self::Account,
         Self::PaymentMethod,
@@ -192,6 +200,27 @@ pub fn cycle_option(current: Option<usize>, len: usize, code: KeyCode) -> Option
     }
 }
 
+// ── Installment confirmation (shared by create and edit flows) ───
+
+pub struct InstallmentConfirmation {
+    pub validated: ValidatedInstallment,
+    pub per_installment: Decimal,
+    pub parcela_dues: Vec<(i16, NaiveDate)>,
+    pub confirmed: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ValidatedInstallment {
+    pub description: String,
+    pub total_amount: Decimal,
+    pub installment_count: i16,
+    pub first_date: NaiveDate,
+    pub account_id: i32,
+    pub category_id: i32,
+}
+
+// ── Transaction form ─────────────────────────────────────────────
+
 pub struct TransactionForm {
     pub mode: TransactionFormMode,
     pub date: InputField,
@@ -203,6 +232,9 @@ pub struct TransactionForm {
     pub category_idx: usize,
     pub active_field: usize,
     pub error: Option<String>,
+    pub is_installment: bool,
+    pub installment_count: InputField,
+    pub confirmation: Option<InstallmentConfirmation>,
 }
 
 #[derive(Debug)]
@@ -217,6 +249,21 @@ pub struct ValidatedTransaction {
 }
 
 impl TransactionForm {
+    /// Returns the list of fields visible in the current form mode.
+    pub fn visible_fields(&self) -> Vec<TransactionField> {
+        TransactionField::ALL
+            .iter()
+            .copied()
+            .filter(|f| match f {
+                TransactionField::IsInstallment => matches!(self.mode, TransactionFormMode::Create),
+                TransactionField::InstallmentCount => {
+                    matches!(self.mode, TransactionFormMode::Create) && self.is_installment
+                }
+                _ => true,
+            })
+            .collect()
+    }
+
     pub fn validate(
         &self,
         accounts: &[Account],
@@ -233,18 +280,28 @@ impl TransactionForm {
 
         let amount = parse_positive_amount(&self.amount.value, locale)?;
 
-        let account = accounts
+        let effective_accounts = self.effective_accounts(accounts);
+        let account = effective_accounts
             .get(self.account_idx)
             .ok_or_else(|| t(locale, "err.no_account"))?;
         let account_id = account.id;
 
-        let methods = account.allowed_payment_methods();
-        let payment_method = methods
-            .get(self.payment_method_idx)
-            .copied()
-            .ok_or_else(|| t(locale, "err.no_payment_method"))?;
+        let transaction_type = if self.is_installment {
+            TransactionType::Expense
+        } else {
+            self.transaction_type
+        };
 
-        let transaction_type = self.transaction_type;
+        let payment_method = if self.is_installment {
+            PaymentMethod::Credit
+        } else {
+            let methods = account.allowed_payment_methods();
+            methods
+                .get(self.payment_method_idx)
+                .copied()
+                .ok_or_else(|| t(locale, "err.no_payment_method"))?
+        };
+
         let filtered_categories: Vec<&Category> = categories
             .iter()
             .filter(|c| c.parsed_type() == transaction_type.category_type())
@@ -265,6 +322,31 @@ impl TransactionForm {
         })
     }
 
+    /// Validate the installment-specific fields (count >= 2).
+    pub fn validate_installment_count(&self, locale: Locale) -> Result<i16, String> {
+        self.installment_count
+            .value
+            .trim()
+            .parse::<i16>()
+            .map_err(|_| t(locale, "err.invalid_inst_count").to_string())
+            .and_then(|v| {
+                if v >= 2 {
+                    Ok(v)
+                } else {
+                    Err(t(locale, "err.at_least_two_inst").into())
+                }
+            })
+    }
+
+    /// Returns accounts filtered by installment mode (CC-only when installment).
+    pub fn effective_accounts<'a>(&self, accounts: &'a [Account]) -> Vec<&'a Account> {
+        if self.is_installment {
+            accounts.iter().filter(|a| a.has_credit_card).collect()
+        } else {
+            accounts.iter().collect()
+        }
+    }
+
     pub fn new_create(locale: Locale) -> Self {
         let today = Local::now().date_naive();
 
@@ -279,6 +361,9 @@ impl TransactionForm {
             category_idx: 0,
             active_field: 0,
             error: None,
+            is_installment: false,
+            installment_count: InputField::new(t(locale, "form.installments")),
+            confirmation: None,
         }
     }
 
@@ -320,17 +405,170 @@ impl TransactionForm {
             category_idx,
             active_field: 0,
             error: None,
+            is_installment: false,
+            installment_count: InputField::new(t(locale, "form.installments")),
+            confirmation: None,
         }
     }
 
     pub fn active_field_id(&self) -> TransactionField {
-        TransactionField::ALL[self.active_field.min(TransactionField::ALL.len() - 1)]
+        let fields = self.visible_fields();
+        fields[self.active_field.min(fields.len() - 1)]
     }
 }
 
+// ── Installment edit form (for editing existing installment groups) ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallmentFormMode {
+    Create,
+    Edit(i32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallmentField {
+    Description,
+    TotalAmount,
+    InstallmentCount,
+    FirstDate,
+    Account,
+    Category,
+}
+
+impl InstallmentField {
+    pub const ALL: [Self; 6] = [
+        Self::Description,
+        Self::TotalAmount,
+        Self::InstallmentCount,
+        Self::FirstDate,
+        Self::Account,
+        Self::Category,
+    ];
+}
+
+pub struct InstallmentForm {
+    pub mode: InstallmentFormMode,
+    pub description: InputField,
+    pub total_amount: InputField,
+    pub installment_count: InputField,
+    pub first_date: InputField,
+    pub account_idx: usize,
+    pub category_idx: usize,
+    pub active_field: usize,
+    pub error: Option<String>,
+    pub confirmation: Option<InstallmentConfirmation>,
+}
+
+impl InstallmentForm {
+    pub fn validate(
+        &self,
+        accounts: &[Account],
+        categories: &[Category],
+        locale: Locale,
+    ) -> Result<ValidatedInstallment, String> {
+        let description = self.description.value.trim().to_string();
+        if description.is_empty() {
+            return Err(t(locale, "err.description_required").into());
+        }
+
+        let total_amount = parse_positive_amount(&self.total_amount.value, locale)?;
+
+        let installment_count = self
+            .installment_count
+            .value
+            .trim()
+            .parse::<i16>()
+            .map_err(|_| t(locale, "err.invalid_inst_count").to_string())
+            .and_then(|v| {
+                if v >= 2 {
+                    Ok(v)
+                } else {
+                    Err(t(locale, "err.at_least_two_inst").into())
+                }
+            })?;
+
+        let first_date = NaiveDate::parse_from_str(self.first_date.value.trim(), "%d-%m-%Y")
+            .map_err(|_| t(locale, "err.invalid_date").to_string())?;
+
+        let credit_accounts: Vec<&Account> =
+            accounts.iter().filter(|a| a.has_credit_card).collect();
+        let account_id = credit_accounts
+            .get(self.account_idx)
+            .map(|a| a.id)
+            .ok_or(t(locale, "err.no_account"))?;
+
+        let expense_categories: Vec<&Category> = categories
+            .iter()
+            .filter(|c| c.parsed_type() == CategoryType::Expense)
+            .collect();
+        let category_id = expense_categories
+            .get(self.category_idx)
+            .map(|c| c.id)
+            .ok_or(t(locale, "err.no_category"))?;
+
+        Ok(ValidatedInstallment {
+            description,
+            total_amount,
+            installment_count,
+            first_date,
+            account_id,
+            category_id,
+        })
+    }
+
+    pub fn new_edit(ip: &InstallmentPurchase, accounts: &[Account], categories: &[Category], locale: Locale) -> Self {
+        let credit_accounts: Vec<&Account> =
+            accounts.iter().filter(|a| a.has_credit_card).collect();
+        let account_idx = credit_accounts
+            .iter()
+            .position(|a| a.id == ip.account_id)
+            .unwrap_or(0);
+
+        let expense_categories: Vec<&Category> = categories
+            .iter()
+            .filter(|c| c.parsed_type() == CategoryType::Expense)
+            .collect();
+        let category_idx = expense_categories
+            .iter()
+            .position(|c| c.id == ip.category_id)
+            .unwrap_or(0);
+
+        Self {
+            mode: InstallmentFormMode::Edit(ip.id),
+            description: InputField::new(t(locale, "form.description")).with_value(&ip.description),
+            total_amount: InputField::new(t(locale, "form.total_amount")).with_value(ip.total_amount.to_string()),
+            installment_count: InputField::new(t(locale, "form.installments"))
+                .with_value(ip.installment_count.to_string()),
+            first_date: InputField::new(t(locale, "form.purchase_date"))
+                .with_value(ip.first_installment_date.format("%d-%m-%Y").to_string()),
+            account_idx,
+            category_idx,
+            active_field: 0,
+            error: None,
+            confirmation: None,
+        }
+    }
+
+    pub fn active_field_id(&self) -> InstallmentField {
+        InstallmentField::ALL[self.active_field.min(InstallmentField::ALL.len() - 1)]
+    }
+}
+
+// ── Rendering ────────────────────────────────────────────────────
+
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    if app.txn.form.is_some() {
-        render_form(frame, area, app);
+    if let Some(form) = &app.txn.inst_form {
+        if form.confirmation.is_some() {
+            render_inst_confirmation(frame, area, app);
+        } else {
+            render_inst_form(frame, area, app);
+        }
+    } else if let Some(form) = &app.txn.form {
+        if form.confirmation.is_some() {
+            render_txn_confirmation(frame, area, app);
+        } else {
+            render_form(frame, area, app);
+        }
     } else {
         render_list(frame, area, app);
     }
@@ -586,55 +824,252 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
         TransactionFormMode::Edit(_) => t(app.locale, "title.edit_transaction"),
     };
 
+    let visible = form.visible_fields();
     let mut lines: Vec<Line> = Vec::new();
 
-    for (i, field) in TransactionField::ALL.iter().enumerate() {
+    for (i, field) in visible.iter().enumerate() {
         let active = i == form.active_field;
         let line = match field {
             TransactionField::Date => form.date.render_line(active),
             TransactionField::Description => form.description.render_line(active),
             TransactionField::Amount => form.amount.render_line(active),
-            TransactionField::TransactionType => {
-                let labels: Vec<&str> = [TransactionType::Expense, TransactionType::Income]
-                    .iter()
-                    .map(|tt| app.locale.enum_label(tt.label()))
-                    .collect();
+            TransactionField::IsInstallment => {
+                let labels = [t(app.locale, "misc.no"), t(app.locale, "misc.yes")];
                 render_toggle(
-                    t(app.locale, "form.type"),
+                    t(app.locale, "form.is_installment"),
                     &labels,
-                    if form.transaction_type == TransactionType::Expense {
-                        0
-                    } else {
-                        1
-                    },
+                    if form.is_installment { 1 } else { 0 },
                     active,
                 )
             }
+            TransactionField::InstallmentCount => form.installment_count.render_line(active),
+            TransactionField::TransactionType => {
+                if form.is_installment {
+                    // Locked to Expense
+                    Line::from(vec![
+                        Span::styled(
+                            format!(" {}: ", t(app.locale, "form.type")),
+                            Style::new().fg(Color::DarkGray),
+                        ),
+                        Span::styled(
+                            format!("{} ({})", app.locale.enum_label("Expense"), t(app.locale, "misc.locked")),
+                            Style::new().fg(Color::DarkGray),
+                        ),
+                    ])
+                } else {
+                    let labels: Vec<&str> = [TransactionType::Expense, TransactionType::Income]
+                        .iter()
+                        .map(|tt| app.locale.enum_label(tt.label()))
+                        .collect();
+                    render_toggle(
+                        t(app.locale, "form.type"),
+                        &labels,
+                        if form.transaction_type == TransactionType::Expense {
+                            0
+                        } else {
+                            1
+                        },
+                        active,
+                    )
+                }
+            }
             TransactionField::Account => {
-                let names: Vec<&str> = app.accounts.iter().map(|a| a.name.as_str()).collect();
-                render_selector(t(app.locale, "form.account"), &names, form.account_idx, active, t(app.locale, "misc.no_accounts"))
+                if form.is_installment {
+                    let names: Vec<&str> = app.accounts.iter()
+                        .filter(|a| a.has_credit_card)
+                        .map(|a| a.name.as_str())
+                        .collect();
+                    render_selector(t(app.locale, "form.account"), &names, form.account_idx, active, t(app.locale, "misc.no_accounts_cc"))
+                } else {
+                    let names: Vec<&str> = app.accounts.iter().map(|a| a.name.as_str()).collect();
+                    render_selector(t(app.locale, "form.account"), &names, form.account_idx, active, t(app.locale, "misc.no_accounts"))
+                }
             }
             TransactionField::PaymentMethod => {
-                let methods: Vec<&str> = app
-                    .accounts
-                    .get(form.account_idx)
-                    .map(|a| {
-                        a.allowed_payment_methods()
-                            .iter()
-                            .map(|m| app.locale.enum_label(m.label()))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                render_selector(t(app.locale, "form.payment"), &methods, form.payment_method_idx, active, t(app.locale, "misc.none"))
+                if form.is_installment {
+                    // Locked to Credit
+                    Line::from(vec![
+                        Span::styled(
+                            format!(" {}: ", t(app.locale, "form.payment")),
+                            Style::new().fg(Color::DarkGray),
+                        ),
+                        Span::styled(
+                            format!("{} ({})", app.locale.enum_label("Credit Card"), t(app.locale, "misc.locked")),
+                            Style::new().fg(Color::DarkGray),
+                        ),
+                    ])
+                } else {
+                    let methods: Vec<&str> = app
+                        .accounts
+                        .get(form.account_idx)
+                        .map(|a| {
+                            a.allowed_payment_methods()
+                                .iter()
+                                .map(|m| app.locale.enum_label(m.label()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    render_selector(t(app.locale, "form.payment"), &methods, form.payment_method_idx, active, t(app.locale, "misc.none"))
+                }
             }
             TransactionField::Category => {
+                let type_filter = if form.is_installment {
+                    CategoryType::Expense
+                } else {
+                    form.transaction_type.category_type()
+                };
                 let filtered: Vec<&str> = app
                     .categories
                     .iter()
-                    .filter(|c| c.parsed_type() == form.transaction_type.category_type())
+                    .filter(|c| c.parsed_type() == type_filter)
                     .map(|c| c.localized_name(app.locale))
                     .collect();
                 render_selector(t(app.locale, "form.category"), &filtered, form.category_idx, active, t(app.locale, "misc.none"))
+            }
+        };
+        lines.push(line);
+    }
+
+    push_form_error(&mut lines, &form.error);
+
+    let block = Block::default().borders(Borders::ALL).title(title);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// Render the installment confirmation screen (shared by create via TransactionForm).
+fn render_txn_confirmation(frame: &mut Frame, area: Rect, app: &mut App) {
+    let locale = app.locale;
+    let conf = app.txn.form.as_ref().unwrap().confirmation.as_ref().unwrap();
+    render_confirmation_content(frame, area, locale, conf, t(locale, "title.confirm_installment"));
+}
+
+/// Render the installment confirmation screen for the InstallmentForm (edit flow).
+fn render_inst_confirmation(frame: &mut Frame, area: Rect, app: &mut App) {
+    let locale = app.locale;
+    let form = app.txn.inst_form.as_ref().unwrap();
+    let title = match form.mode {
+        InstallmentFormMode::Create => t(locale, "title.confirm_installment"),
+        InstallmentFormMode::Edit(_) => t(locale, "title.confirm_installment_edit"),
+    };
+    let conf = form.confirmation.as_ref().unwrap();
+    render_confirmation_content(frame, area, locale, conf, title);
+}
+
+/// Shared rendering logic for installment confirmation screens.
+fn render_confirmation_content(frame: &mut Frame, area: Rect, locale: Locale, conf: &InstallmentConfirmation, title: &str) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    lines.push(Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            &conf.validated.description,
+            Style::new().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(
+                " — {} x {}",
+                conf.validated.installment_count,
+                format_brl(conf.per_installment)
+            ),
+            Style::new().fg(Color::DarkGray),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    for (parcela, due) in &conf.parcela_dues {
+        lines.push(Line::from(format!(
+            "  {} {:>2} → {} {}",
+            t(locale, "misc.parcela"),
+            parcela,
+            t(locale, "misc.due"),
+            due.format("%d/%m/%Y")
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!(" {}", t(locale, "misc.is_this_correct")),
+        Style::new().fg(Color::Yellow),
+    )));
+    lines.push(Line::from(""));
+
+    let yes_style = if conf.confirmed {
+        Style::new()
+            .fg(Color::Black)
+            .bg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(Color::DarkGray)
+    };
+    let no_style = if !conf.confirmed {
+        Style::new()
+            .fg(Color::Black)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(Color::DarkGray)
+    };
+
+    lines.push(Line::from(vec![
+        Span::raw("   "),
+        Span::styled(format!(" {} ", t(locale, "misc.yes")), yes_style),
+        Span::raw("  "),
+        Span::styled(format!(" {} ", t(locale, "misc.no")), no_style),
+    ]));
+
+    let block = Block::default().borders(Borders::ALL).title(title);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// Render the InstallmentForm (used for editing existing installment groups).
+fn render_inst_form(frame: &mut Frame, area: Rect, app: &mut App) {
+    let form = app.txn.inst_form.as_ref().unwrap();
+
+    let title = t(app.locale, "title.edit_installment");
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, field) in InstallmentField::ALL.iter().enumerate() {
+        let active = i == form.active_field;
+        let line = match field {
+            InstallmentField::Description => form.description.render_line(active),
+            InstallmentField::TotalAmount => form.total_amount.render_line(active),
+            InstallmentField::InstallmentCount => form.installment_count.render_line(active),
+            InstallmentField::FirstDate => form.first_date.render_line(active),
+            InstallmentField::Account => {
+                let names: Vec<&str> = app
+                    .accounts
+                    .iter()
+                    .filter(|a| a.has_credit_card)
+                    .map(|a| a.name.as_str())
+                    .collect();
+                // Account is always locked in edit mode
+                let name = names.get(form.account_idx).unwrap_or(&"?");
+                Line::from(vec![
+                    Span::styled(
+                        format!(" {}: ", t(app.locale, "form.account")),
+                        Style::new().fg(Color::DarkGray),
+                    ),
+                    Span::styled(
+                        format!("{} ({})", name, t(app.locale, "misc.locked")),
+                        Style::new().fg(Color::DarkGray),
+                    ),
+                ])
+            }
+            InstallmentField::Category => {
+                let names: Vec<&str> = app
+                    .categories
+                    .iter()
+                    .filter(|c| c.parsed_type() == CategoryType::Expense)
+                    .map(|c| c.localized_name(app.locale))
+                    .collect();
+                render_selector(
+                    t(app.locale, "form.category"),
+                    &names,
+                    form.category_idx,
+                    active,
+                    t(app.locale, "misc.no_expense_cats"),
+                )
             }
         };
         lines.push(line);
@@ -681,10 +1116,18 @@ impl App {
                     .selected()
                     .and_then(|i| self.txn.items.get(i))
                 {
-                    if txn.installment_purchase_id.is_some() {
-                        self.status_message = Some(StatusMessage::error(
-                            t(self.locale, "msg.installment_managed"),
-                        ));
+                    if let Some(ip_id) = txn.installment_purchase_id {
+                        // Edit the parent installment group
+                        if let Some(ip) = self.installment_purchases.iter().find(|ip| ip.id == ip_id) {
+                            let ip = ip.clone();
+                            self.txn.inst_form = Some(InstallmentForm::new_edit(
+                                &ip,
+                                &self.accounts,
+                                &self.categories,
+                                self.locale,
+                            ));
+                            self.input_mode = InputMode::Editing;
+                        }
                     } else {
                         let txn = txn.clone();
                         self.txn.form = Some(TransactionForm::new_edit(
@@ -703,15 +1146,20 @@ impl App {
                     .selected()
                     .and_then(|i| self.txn.items.get(i))
                 {
-                    if txn.installment_purchase_id.is_some() {
-                        self.status_message = Some(StatusMessage::error(
-                            t(self.locale, "msg.installment_managed"),
-                        ));
+                    if let Some(ip_id) = txn.installment_purchase_id {
+                        // Delete the entire installment group
+                        if let Some(ip) = self.installment_purchases.iter().find(|ip| ip.id == ip_id) {
+                            let ip_desc = ip.description.clone();
+                            self.confirm_action = Some(ConfirmAction::DeleteInstallment(ip_id));
+                            self.confirm_popup = Some(ConfirmPopup::new(
+                                crate::ui::i18n::tf_delete_installment(self.locale, &ip_desc),
+                            ));
+                        }
                     } else {
                         let txn_id = txn.id;
                         let txn_desc = txn.description.clone();
                         self.confirm_action = Some(ConfirmAction::DeleteTransaction(txn_id));
-                        self.confirm_popup = Some(crate::ui::components::popup::ConfirmPopup::new(
+                        self.confirm_popup = Some(ConfirmPopup::new(
                             crate::ui::i18n::tf_delete(self.locale, &txn_desc),
                         ));
                     }
@@ -853,9 +1301,19 @@ impl App {
 
     pub(crate) fn handle_transaction_form_key(&mut self, code: KeyCode) {
         let form = self.txn.form.as_mut().unwrap();
+
+        // If confirming (installment), only handle Left/Right toggle
+        if let Some(conf) = &mut form.confirmation {
+            if matches!(code, KeyCode::Left | KeyCode::Right) {
+                conf.confirmed = !conf.confirmed;
+            }
+            return;
+        }
+
+        let visible = form.visible_fields();
         match code {
             KeyCode::Tab | KeyCode::Down => {
-                if form.active_field < TransactionField::ALL.len() - 1 {
+                if form.active_field < visible.len() - 1 {
                     form.active_field += 1;
                 }
             }
@@ -868,8 +1326,21 @@ impl App {
                 TransactionField::Date => form.date.handle_key(code),
                 TransactionField::Description => form.description.handle_key(code),
                 TransactionField::Amount => form.amount.handle_key(code),
-                TransactionField::TransactionType => {
+                TransactionField::IsInstallment => {
                     if is_toggle_key(code) {
+                        form.is_installment = !form.is_installment;
+                        // Reset dependent fields
+                        form.account_idx = 0;
+                        form.payment_method_idx = 0;
+                        form.category_idx = 0;
+                        if form.is_installment {
+                            form.transaction_type = TransactionType::Expense;
+                        }
+                    }
+                }
+                TransactionField::InstallmentCount => form.installment_count.handle_key(code),
+                TransactionField::TransactionType => {
+                    if !form.is_installment && is_toggle_key(code) {
                         form.transaction_type = match form.transaction_type {
                             TransactionType::Expense => TransactionType::Income,
                             TransactionType::Income => TransactionType::Expense,
@@ -879,12 +1350,13 @@ impl App {
                 }
                 TransactionField::Account => {
                     if is_toggle_key(code) {
-                        cycle_index(&mut form.account_idx, self.accounts.len(), code);
+                        let len = form.effective_accounts(&self.accounts).len();
+                        cycle_index(&mut form.account_idx, len, code);
                         form.payment_method_idx = 0;
                     }
                 }
                 TransactionField::PaymentMethod => {
-                    if is_toggle_key(code) {
+                    if !form.is_installment && is_toggle_key(code) {
                         let len = self
                             .accounts
                             .get(form.account_idx)
@@ -895,10 +1367,59 @@ impl App {
                 }
                 TransactionField::Category => {
                     if is_toggle_key(code) {
+                        let type_filter = if form.is_installment {
+                            CategoryType::Expense
+                        } else {
+                            form.transaction_type.category_type()
+                        };
                         let len = self
                             .categories
                             .iter()
-                            .filter(|c| c.parsed_type() == form.transaction_type.category_type())
+                            .filter(|c| c.parsed_type() == type_filter)
+                            .count();
+                        cycle_index(&mut form.category_idx, len, code);
+                    }
+                }
+            },
+        }
+    }
+
+    pub(crate) fn handle_installment_form_key(&mut self, code: KeyCode) {
+        let form = self.txn.inst_form.as_mut().unwrap();
+
+        // If confirming, only handle Left/Right toggle
+        if let Some(conf) = &mut form.confirmation {
+            if matches!(code, KeyCode::Left | KeyCode::Right) {
+                conf.confirmed = !conf.confirmed;
+            }
+            return;
+        }
+
+        match code {
+            KeyCode::Tab | KeyCode::Down => {
+                if form.active_field < InstallmentField::ALL.len() - 1 {
+                    form.active_field += 1;
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if form.active_field > 0 {
+                    form.active_field -= 1;
+                }
+            }
+            _ => match form.active_field_id() {
+                InstallmentField::Description => form.description.handle_key(code),
+                InstallmentField::TotalAmount => form.total_amount.handle_key(code),
+                InstallmentField::InstallmentCount => form.installment_count.handle_key(code),
+                InstallmentField::FirstDate => form.first_date.handle_key(code),
+                InstallmentField::Account => {
+                    // Account is always locked in edit mode (only mode used)
+                }
+                InstallmentField::Category => {
+                    if is_toggle_key(code) {
+                        let len = self
+                            .categories
+                            .iter()
+                            .filter(|c| c.parsed_type() == CategoryType::Expense)
                             .count();
                         cycle_index(&mut form.category_idx, len, code);
                     }
@@ -911,6 +1432,51 @@ impl App {
         use crate::db::transactions;
 
         let form = self.txn.form.as_ref().unwrap();
+
+        // If we're in confirmation phase (installment create)
+        if let Some(conf) = &form.confirmation {
+            let confirmed = conf.confirmed;
+            if confirmed {
+                let validated = self
+                    .txn.form
+                    .as_mut()
+                    .unwrap()
+                    .confirmation
+                    .take()
+                    .unwrap()
+                    .validated;
+
+                db::installments::create_installment_purchase(
+                    &self.pool,
+                    validated.total_amount,
+                    validated.installment_count,
+                    &validated.description,
+                    validated.category_id,
+                    validated.account_id,
+                    validated.first_date,
+                )
+                .await?;
+                info!(
+                    desc = %validated.description,
+                    total = %validated.total_amount,
+                    count = validated.installment_count,
+                    "installment purchase created"
+                );
+
+                self.txn.form = None;
+                self.input_mode = InputMode::Normal;
+                self.refresh_installments().await?;
+                self.load_transactions().await?;
+                self.refresh_balances().await?;
+                self.refresh_budgets().await?;
+                self.refresh_dashboard_statements().await?;
+            } else {
+                // No selected — return to editing
+                self.txn.form.as_mut().unwrap().confirmation = None;
+            }
+            return Ok(());
+        }
+
         let validated = match form.validate(&self.accounts, &self.categories, self.locale) {
             Ok(v) => v,
             Err(e) => {
@@ -919,6 +1485,63 @@ impl App {
             }
         };
 
+        // If this is an installment create, validate count and show confirmation
+        if form.is_installment {
+            let count = match form.validate_installment_count(self.locale) {
+                Ok(c) => c,
+                Err(e) => {
+                    self.txn.form.as_mut().unwrap().error = Some(e);
+                    return Ok(());
+                }
+            };
+
+            let per_installment =
+                (validated.amount / Decimal::from(count)).round_dp(2);
+
+            let account = self
+                .accounts
+                .iter()
+                .find(|a| a.id == validated.account_id)
+                .unwrap();
+            let billing_day = account.billing_day.unwrap_or(1) as u32;
+            let due_day = account.due_day.unwrap_or(1) as u32;
+
+            let mut parcela_dues = Vec::with_capacity(count as usize);
+            for i in 1..=count {
+                let date = db::add_months(validated.date, (i - 1) as u32);
+                let close = latest_closing_date(date, billing_day);
+                let statement_close = if date > close {
+                    let (ny, nm) = next_month(close.year(), close.month());
+                    clamped_day(ny, nm, billing_day)
+                } else {
+                    close
+                };
+                let due = statement_due_date(
+                    statement_close.year(),
+                    statement_close.month(),
+                    billing_day,
+                    due_day,
+                );
+                parcela_dues.push((i, due));
+            }
+
+            self.txn.form.as_mut().unwrap().confirmation = Some(InstallmentConfirmation {
+                validated: ValidatedInstallment {
+                    description: validated.description,
+                    total_amount: validated.amount,
+                    installment_count: count,
+                    first_date: validated.date,
+                    account_id: validated.account_id,
+                    category_id: validated.category_id,
+                },
+                per_installment,
+                parcela_dues,
+                confirmed: false,
+            });
+            return Ok(());
+        }
+
+        // Regular transaction create/edit
         let params = transactions::TransactionParams {
             amount: validated.amount,
             description: validated.description,
@@ -953,9 +1576,131 @@ impl App {
         Ok(())
     }
 
+    /// Two-phase submit for installment edit form.
+    pub(crate) async fn submit_installment_form(&mut self) -> anyhow::Result<()> {
+        if self.txn.inst_form.as_ref().unwrap().confirmation.is_some() {
+            let confirmed = self
+                .txn.inst_form
+                .as_ref()
+                .unwrap()
+                .confirmation
+                .as_ref()
+                .unwrap()
+                .confirmed;
+
+            if confirmed {
+                let validated = self
+                    .txn.inst_form
+                    .as_mut()
+                    .unwrap()
+                    .confirmation
+                    .take()
+                    .unwrap()
+                    .validated;
+                let mode = self.txn.inst_form.as_ref().unwrap().mode;
+
+                match mode {
+                    InstallmentFormMode::Create => unreachable!(),
+                    InstallmentFormMode::Edit(id) => {
+                        db::installments::update_installment_purchase(
+                            &self.pool,
+                            id,
+                            validated.total_amount,
+                            validated.installment_count,
+                            &validated.description,
+                            validated.category_id,
+                            validated.first_date,
+                        )
+                        .await?;
+                        info!(
+                            id,
+                            desc = %validated.description,
+                            total = %validated.total_amount,
+                            count = validated.installment_count,
+                            "installment purchase updated"
+                        );
+                    }
+                }
+
+                self.txn.inst_form = None;
+                self.input_mode = InputMode::Normal;
+                self.refresh_installments().await?;
+                self.load_transactions().await?;
+                self.refresh_balances().await?;
+                self.refresh_budgets().await?;
+                self.refresh_dashboard_statements().await?;
+            } else {
+                // No selected — return to editing
+                self.txn.inst_form.as_mut().unwrap().confirmation = None;
+            }
+            return Ok(());
+        }
+
+        // Validate and show confirmation
+        let form = self.txn.inst_form.as_ref().unwrap();
+        let validated = match form.validate(&self.accounts, &self.categories, self.locale) {
+            Ok(v) => v,
+            Err(e) => {
+                self.txn.inst_form.as_mut().unwrap().error = Some(e);
+                return Ok(());
+            }
+        };
+
+        let per_installment =
+            (validated.total_amount / Decimal::from(validated.installment_count)).round_dp(2);
+
+        let account = self
+            .accounts
+            .iter()
+            .find(|a| a.id == validated.account_id)
+            .unwrap();
+        let billing_day = account.billing_day.unwrap_or(1) as u32;
+        let due_day = account.due_day.unwrap_or(1) as u32;
+
+        let mut parcela_dues = Vec::with_capacity(validated.installment_count as usize);
+        for i in 1..=validated.installment_count {
+            let date = db::add_months(validated.first_date, (i - 1) as u32);
+            let close = latest_closing_date(date, billing_day);
+            let statement_close = if date > close {
+                let (ny, nm) = next_month(close.year(), close.month());
+                clamped_day(ny, nm, billing_day)
+            } else {
+                close
+            };
+            let due = statement_due_date(
+                statement_close.year(),
+                statement_close.month(),
+                billing_day,
+                due_day,
+            );
+            parcela_dues.push((i, due));
+        }
+
+        self.txn.inst_form.as_mut().unwrap().confirmation = Some(InstallmentConfirmation {
+            validated,
+            per_installment,
+            parcela_dues,
+            confirmed: false,
+        });
+
+        Ok(())
+    }
+
     pub(crate) async fn execute_delete_transaction(&mut self, id: i32) -> anyhow::Result<()> {
         crate::db::transactions::delete_transaction(&self.pool, id).await?;
         info!(id, "transaction deleted");
+        self.load_transactions().await?;
+        self.refresh_balances().await?;
+        self.refresh_budgets().await?;
+        self.refresh_dashboard_statements().await?;
+        clamp_selection(&mut self.txn.table_state, self.txn.items.len());
+        Ok(())
+    }
+
+    pub(crate) async fn execute_delete_installment(&mut self, id: i32) -> anyhow::Result<()> {
+        crate::db::installments::delete_installment_purchase(&self.pool, id).await?;
+        info!(id, "installment purchase deleted (transactions cascaded)");
+        self.refresh_installments().await?;
         self.load_transactions().await?;
         self.refresh_balances().await?;
         self.refresh_budgets().await?;

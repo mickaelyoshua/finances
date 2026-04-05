@@ -212,30 +212,6 @@ fn screen_help(screen: Screen, locale: Locale) -> HelpContent {
             ],
         ),
 
-        // ── Installments ──
-        (Screen::Installments, Locale::En) => (
-            "Track installment purchases (parcelas). Transactions are auto-generated.",
-            vec![
-                ("n", "New installment purchase"),
-                ("e", "Edit selected"),
-                ("d", "Delete selected (and its transactions)"),
-                ("x", "Export to CSV"),
-                ("Ctrl+L", "Toggle language"),
-                ("?", "Show this help"),
-            ],
-        ),
-        (Screen::Installments, Locale::Pt) => (
-            "Acompanhe compras parceladas. Transações são geradas automaticamente.",
-            vec![
-                ("n", "Novo parcelamento"),
-                ("e", "Editar selecionado"),
-                ("d", "Excluir selecionado (e suas transações)"),
-                ("x", "Exportar para CSV"),
-                ("Ctrl+L", "Alternar idioma"),
-                ("?", "Mostrar esta ajuda"),
-            ],
-        ),
-
         // ── Recurring ──
         (Screen::Recurring, Locale::En) => (
             "Manage recurring transactions. Confirm pending items when they occur.",

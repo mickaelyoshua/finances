@@ -6,7 +6,7 @@ use rust_decimal_macros::dec;
 
 use finances::models::*;
 use finances::ui::i18n::Locale;
-use finances::ui::screens::installments::{InstallmentForm, InstallmentFormMode};
+use finances::ui::screens::transactions::{InstallmentForm, InstallmentFormMode};
 
 fn make_accounts() -> Vec<Account> {
     vec![

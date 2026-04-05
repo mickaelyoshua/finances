@@ -4,7 +4,6 @@ pub mod categories;
 pub mod cc_payments;
 pub mod cc_statements;
 pub mod dashboard;
-pub mod installments;
 pub mod recurring;
 pub mod transactions;
 pub mod transfers;

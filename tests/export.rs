@@ -181,35 +181,6 @@ fn export_cc_payments_headers_and_data() {
     fs::remove_file(&path).unwrap();
 }
 
-// ── export_installments ─────────────────────────────────────────────
-
-#[test]
-fn export_installments_headers_and_data() {
-    let installments = vec![InstallmentPurchase {
-        id: 1,
-        total_amount: dec!(2400),
-        installment_count: 12,
-        description: "New laptop".into(),
-        category_id: 10,
-        account_id: 5,
-        first_installment_date: date(2026, 1, 15),
-        created_at: Utc::now(),
-    }];
-
-    let path =
-        export::export_installments(&installments, |_| "Nubank".into(), |_| "Electronics".into())
-            .unwrap();
-
-    let lines = read_csv_lines(&path);
-    assert_eq!(
-        lines[0],
-        "Description,Total Amount,Installments,First Date,Account,Category"
-    );
-    assert_eq!(lines[1], "New laptop,2400,12,2026-01-15,Nubank,Electronics");
-
-    fs::remove_file(&path).unwrap();
-}
-
 // ── export_recurring ────────────────────────────────────────────────
 
 #[test]

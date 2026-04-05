@@ -771,10 +771,19 @@ impl App {
                     .and_then(|i| self.cc_stmt.detail_txns.get(i))
                 {
                     if let Some(ip_id) = txn.installment_purchase_id {
-                        // Navigate to Installments screen and select the parent purchase
-                        self.screen = Screen::Installments;
-                        if let Some(pos) = self.inst.items.iter().position(|ip| ip.id == ip_id) {
-                            self.inst.table_state.select(Some(pos));
+                        // Navigate to Transactions screen and open installment edit form
+                        if let Some(ip) = self.installment_purchases.iter().find(|ip| ip.id == ip_id) {
+                            let ip = ip.clone();
+                            self.txn.inst_form = Some(
+                                crate::ui::screens::transactions::InstallmentForm::new_edit(
+                                    &ip,
+                                    &self.accounts,
+                                    &self.categories,
+                                    self.locale,
+                                )
+                            );
+                            self.screen = Screen::Transactions;
+                            self.input_mode = InputMode::Editing;
                         }
                     } else {
                         // Regular transaction — open edit form on Transactions screen

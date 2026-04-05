@@ -17,7 +17,7 @@ use rust_decimal::Decimal;
 use tracing::info;
 
 use crate::models::{
-    Account, Budget, Category, CreditCardPayment, InstallmentPurchase, RecurringTransaction,
+    Account, Budget, Category, CreditCardPayment, RecurringTransaction,
     Transaction, Transfer,
 };
 
@@ -115,36 +115,6 @@ pub fn export_cc_payments(
     }
     wtr.flush()?;
     info!(rows = payments.len(), path = %path.display(), "exported cc_payments");
-    Ok(path)
-}
-
-pub fn export_installments(
-    installments: &[InstallmentPurchase],
-    account_name: impl Fn(i32) -> String,
-    category_name: impl Fn(i32) -> String,
-) -> Result<PathBuf> {
-    let path = export_path("installments")?;
-    let mut wtr = csv::Writer::from_path(&path)?;
-    wtr.write_record([
-        "Description",
-        "Total Amount",
-        "Installments",
-        "First Date",
-        "Account",
-        "Category",
-    ])?;
-    for i in installments {
-        wtr.write_record([
-            i.description.clone(),
-            i.total_amount.to_string(),
-            i.installment_count.to_string(),
-            i.first_installment_date.to_string(),
-            account_name(i.account_id),
-            category_name(i.category_id),
-        ])?;
-    }
-    wtr.flush()?;
-    info!(rows = installments.len(), path = %path.display(), "exported installments");
     Ok(path)
 }
 
