@@ -61,10 +61,10 @@ impl Category {
 
     /// Return the category name in the active locale (PT name_pt → EN name).
     pub fn localized_name(&self, locale: Locale) -> &str {
-        if locale == Locale::Pt {
-            if let Some(pt) = &self.name_pt {
-                return pt.as_str();
-            }
+        if locale == Locale::Pt
+            && let Some(pt) = &self.name_pt
+        {
+            return pt.as_str();
         }
         &self.name
     }
