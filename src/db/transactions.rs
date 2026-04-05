@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use chrono::NaiveDate;
+use chrono::{Local, NaiveDate, TimeZone};
 use rust_decimal::Decimal;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
@@ -167,14 +167,26 @@ pub async fn delete_transaction(pool: &PgPool, id: i32) -> Result<(), sqlx::Erro
 }
 
 pub async fn has_transactions_today(pool: &PgPool, today: NaiveDate) -> Result<bool, sqlx::Error> {
+    // Convert local day boundaries to UTC so the comparison matches
+    // regardless of the DB server timezone (which is typically UTC).
+    let start_utc = Local.from_local_datetime(&today.and_hms_opt(0, 0, 0).unwrap())
+        .single()
+        .unwrap()
+        .to_utc();
+    let end_utc = Local.from_local_datetime(&today.and_hms_opt(23, 59, 59).unwrap())
+        .single()
+        .unwrap()
+        .to_utc();
+
     let row: (bool,) = sqlx::query_as(
         "SELECT EXISTS(
-            SELECT 1 FROM transactions WHERE created_at::date = $1 AND installment_purchase_id IS NULL
+            SELECT 1 FROM transactions WHERE created_at BETWEEN $1 AND $2 AND installment_purchase_id IS NULL
             UNION ALL
-            SELECT 1 FROM installment_purchases WHERE created_at::date = $1
+            SELECT 1 FROM installment_purchases WHERE created_at BETWEEN $1 AND $2
         )",
     )
-    .bind(today)
+    .bind(start_utc)
+    .bind(end_utc)
     .fetch_one(pool)
     .await?;
     Ok(row.0)
