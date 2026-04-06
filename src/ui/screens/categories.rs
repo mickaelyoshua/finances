@@ -218,6 +218,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     1
                 },
                 active,
+                area.width,
             ),
         };
         lines.push(line);

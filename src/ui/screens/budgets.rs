@@ -276,6 +276,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                         form.category_idx,
                         active,
                         t(app.locale, "misc.no_expense_cats"),
+                        area.width,
                     )
                 }
             }
@@ -290,7 +291,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                         t(app.locale, "misc.locked")
                     ))
                 } else {
-                    render_toggle(t(app.locale, "form.period"), &labels, form.period_idx, active)
+                    render_toggle(t(app.locale, "form.period"), &labels, form.period_idx, active, area.width)
                 }
             }
         };

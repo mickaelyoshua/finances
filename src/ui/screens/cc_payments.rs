@@ -218,6 +218,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     form.account_idx,
                     active,
                     t(app.locale, "misc.no_cc_accounts"),
+                    area.width,
                 )
             }
             CcPaymentField::Amount => form.amount.render_line(active),

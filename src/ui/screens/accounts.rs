@@ -523,18 +523,21 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     1
                 },
                 active,
+                area.width,
             ),
             AccountField::HasCreditCard => render_toggle(
                 t(app.locale, "form.credit_card"),
                 &[t(app.locale, "misc.no"), t(app.locale, "misc.yes")],
                 if form.has_credit_card { 1 } else { 0 },
                 active,
+                area.width,
             ),
             AccountField::HasDebitCard => render_toggle(
                 t(app.locale, "form.debit_card"),
                 &[t(app.locale, "misc.no"), t(app.locale, "misc.yes")],
                 if form.has_debit_card { 1 } else { 0 },
                 active,
+                area.width,
             ),
         };
         lines.push(line);

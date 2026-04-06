@@ -227,11 +227,11 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
             TransferField::Date => form.date.render_line(active),
             TransferField::FromAccount => {
                 let names: Vec<&str> = app.accounts.iter().map(|a| a.name.as_str()).collect();
-                render_selector(t(app.locale, "form.from"), &names, form.from_account_idx, active, t(app.locale, "misc.no_accounts"))
+                render_selector(t(app.locale, "form.from"), &names, form.from_account_idx, active, t(app.locale, "misc.no_accounts"), area.width)
             }
             TransferField::ToAccount => {
                 let names: Vec<&str> = app.accounts.iter().map(|a| a.name.as_str()).collect();
-                render_selector(t(app.locale, "form.to"), &names, form.to_account_idx, active, t(app.locale, "misc.no_accounts"))
+                render_selector(t(app.locale, "form.to"), &names, form.to_account_idx, active, t(app.locale, "misc.no_accounts"), area.width)
             }
             TransferField::Amount => form.amount.render_line(active),
             TransferField::Description => form.description.render_line(active),

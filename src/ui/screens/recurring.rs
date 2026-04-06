@@ -370,10 +370,11 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     1
                 },
                 active,
+                area.width,
             ),
             RecurringField::Account => {
                 let names: Vec<&str> = app.accounts.iter().map(|a| a.name.as_str()).collect();
-                render_selector(t(app.locale, "form.account"), &names, form.account_idx, active, t(app.locale, "misc.no_accounts"))
+                render_selector(t(app.locale, "form.account"), &names, form.account_idx, active, t(app.locale, "misc.no_accounts"), area.width)
             }
             RecurringField::PaymentMethod => {
                 let methods: Vec<&str> = app
@@ -386,7 +387,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                             .collect()
                     })
                     .unwrap_or_default();
-                render_selector(t(app.locale, "form.payment"), &methods, form.payment_method_idx, active, t(app.locale, "misc.none"))
+                render_selector(t(app.locale, "form.payment"), &methods, form.payment_method_idx, active, t(app.locale, "misc.none"), area.width)
             }
             RecurringField::Category => {
                 let filtered: Vec<&str> = app
@@ -395,11 +396,11 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .filter(|c| c.parsed_type() == form.transaction_type.category_type())
                     .map(|c| c.localized_name(app.locale))
                     .collect();
-                render_selector(t(app.locale, "form.category"), &filtered, form.category_idx, active, t(app.locale, "misc.none"))
+                render_selector(t(app.locale, "form.category"), &filtered, form.category_idx, active, t(app.locale, "misc.none"), area.width)
             }
             RecurringField::Frequency => {
                 let labels: Vec<&str> = FREQUENCIES.iter().map(|f| app.locale.enum_label(f.label())).collect();
-                render_toggle(t(app.locale, "form.frequency"), &labels, form.frequency_idx, active)
+                render_toggle(t(app.locale, "form.frequency"), &labels, form.frequency_idx, active, area.width)
             }
             RecurringField::NextDue => form.next_due.render_line(active),
         };

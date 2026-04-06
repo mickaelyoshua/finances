@@ -840,6 +840,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     &labels,
                     if form.is_installment { 1 } else { 0 },
                     active,
+                    area.width,
                 )
             }
             TransactionField::InstallmentCount => form.installment_count.render_line(active),
@@ -870,6 +871,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                             1
                         },
                         active,
+                        area.width,
                     )
                 }
             }
@@ -879,10 +881,10 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                         .filter(|a| a.has_credit_card)
                         .map(|a| a.name.as_str())
                         .collect();
-                    render_selector(t(app.locale, "form.account"), &names, form.account_idx, active, t(app.locale, "misc.no_accounts_cc"))
+                    render_selector(t(app.locale, "form.account"), &names, form.account_idx, active, t(app.locale, "misc.no_accounts_cc"), area.width)
                 } else {
                     let names: Vec<&str> = app.accounts.iter().map(|a| a.name.as_str()).collect();
-                    render_selector(t(app.locale, "form.account"), &names, form.account_idx, active, t(app.locale, "misc.no_accounts"))
+                    render_selector(t(app.locale, "form.account"), &names, form.account_idx, active, t(app.locale, "misc.no_accounts"), area.width)
                 }
             }
             TransactionField::PaymentMethod => {
@@ -909,7 +911,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                                 .collect()
                         })
                         .unwrap_or_default();
-                    render_selector(t(app.locale, "form.payment"), &methods, form.payment_method_idx, active, t(app.locale, "misc.none"))
+                    render_selector(t(app.locale, "form.payment"), &methods, form.payment_method_idx, active, t(app.locale, "misc.none"), area.width)
                 }
             }
             TransactionField::Category => {
@@ -924,7 +926,7 @@ fn render_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     .filter(|c| c.parsed_type() == type_filter)
                     .map(|c| c.localized_name(app.locale))
                     .collect();
-                render_selector(t(app.locale, "form.category"), &filtered, form.category_idx, active, t(app.locale, "misc.none"))
+                render_selector(t(app.locale, "form.category"), &filtered, form.category_idx, active, t(app.locale, "misc.none"), area.width)
             }
         };
         lines.push(line);
@@ -1069,6 +1071,7 @@ fn render_inst_form(frame: &mut Frame, area: Rect, app: &mut App) {
                     form.category_idx,
                     active,
                     t(app.locale, "misc.no_expense_cats"),
+                    area.width,
                 )
             }
         };
