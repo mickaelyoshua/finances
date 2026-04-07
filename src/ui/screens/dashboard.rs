@@ -63,7 +63,7 @@ fn render_notifications(frame: &mut Frame, area: Rect, app: &App) {
         .enumerate()
         .map(|(i, n)| {
             let style = if i == app.dashboard.notification_selection {
-                Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD)
             } else {
                 Style::new().fg(Color::White)
             };
@@ -80,7 +80,7 @@ fn render_notifications(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(Style::new().fg(Color::Yellow));
+        .border_style(Style::new().fg(Color::Magenta));
     let paragraph = Paragraph::new(lines).block(block);
 
     frame.render_widget(paragraph, area);

@@ -172,6 +172,10 @@ async fn main() -> anyhow::Result<()> {
             notify_rust::Notification::new()
                 .summary(t(locale, "notif.summary"))
                 .body(&body)
+                .icon(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/icon.svg"))
+                .hint(notify_rust::Hint::Custom("fgcolor".into(), "#ffffff".into()))
+                .hint(notify_rust::Hint::Custom("bgcolor".into(), "#800080".into()))
+                .hint(notify_rust::Hint::Custom("frcolor".into(), "#a020f0".into()))
                 .show()?;
         }
 

@@ -213,7 +213,7 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
             if !app.dashboard.notifications.is_empty() {
                 spans.push(Span::styled(
                     format!(" [{} {}]", app.dashboard.notifications.len(), t(l, "status.unread")),
-                    Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD),
                 ));
             }
         }
