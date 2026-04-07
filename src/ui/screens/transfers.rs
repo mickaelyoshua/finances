@@ -135,7 +135,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         t(app.locale, "header.amount"),
         t(app.locale, "header.description"),
     ])
-    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    .style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .xfer.items

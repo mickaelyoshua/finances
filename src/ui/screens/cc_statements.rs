@@ -392,7 +392,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             Span::styled(" Account: ", Style::new().fg(Color::DarkGray)),
             Span::styled(
                 format!("◀ {} ▶", display_name),
-                Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 format!(
@@ -413,7 +413,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         t(app.locale, "header.balance"),
         t(app.locale, "header.status"),
     ])
-    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    .style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .cc_stmt.items
@@ -557,7 +557,7 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Transactions table
     let table_header = Row::new([t(app.locale, "header.date"), t(app.locale, "header.description"), t(app.locale, "header.category"), t(app.locale, "header.type"), t(app.locale, "header.amount")])
-        .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        .style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .cc_stmt.detail_txns

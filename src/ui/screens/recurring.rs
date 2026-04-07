@@ -242,7 +242,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         t(app.locale, "header.account"),
         t(app.locale, "header.category"),
     ])
-    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    .style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .recur.list

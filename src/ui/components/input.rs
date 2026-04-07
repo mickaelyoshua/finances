@@ -95,7 +95,7 @@ impl InputField {
 
     pub fn render_line(&self, active: bool) -> Line<'_> {
         let label_style = if active {
-            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
         } else {
             Style::new().fg(Color::DarkGray)
         };
@@ -130,7 +130,7 @@ impl InputField {
 
     pub fn render_inline_spans(&self, active: bool) -> Vec<Span<'_>> {
         let label_style = if active {
-            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
         } else {
             Style::new().fg(Color::DarkGray)
         };

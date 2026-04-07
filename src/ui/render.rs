@@ -58,7 +58,7 @@ fn render_tabs(frame: &mut Frame, area: Rect, current: Screen, locale: Locale) {
         let tab_lines: Vec<Line> = all_titles.into_iter().map(Line::from).collect();
         let tabs = Tabs::new(tab_lines)
             .select(current.index())
-            .highlight_style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            .highlight_style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD))
             .divider("|");
         frame.render_widget(tabs, area);
         return;
@@ -121,7 +121,7 @@ fn render_tabs(frame: &mut Frame, area: Rect, current: Screen, locale: Locale) {
 
     let tabs = Tabs::new(visible)
         .select(sel)
-        .highlight_style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .highlight_style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD))
         .divider("|");
     frame.render_widget(tabs, tab_rect);
 
@@ -156,7 +156,7 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
             " [PROD] ",
             Style::new()
                 .fg(Color::Black)
-                .bg(Color::Yellow)
+                .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )
     } else {
@@ -191,23 +191,23 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     match app.input_mode {
         InputMode::Editing => {
             spans.extend([
-                Span::styled(" Esc", Style::new().fg(Color::Yellow)),
+                Span::styled(" Esc", Style::new().fg(Color::Cyan)),
                 Span::raw(format!(" {} ", t(l, "status.cancel"))),
-                Span::styled("Tab/↑↓", Style::new().fg(Color::Yellow)),
+                Span::styled("Tab/↑↓", Style::new().fg(Color::Cyan)),
                 Span::raw(format!(" {} ", t(l, "status.nav_fields"))),
-                Span::styled("Space", Style::new().fg(Color::Yellow)),
+                Span::styled("Space", Style::new().fg(Color::Cyan)),
                 Span::raw(format!(" {} ", t(l, "status.toggle"))),
-                Span::styled("Enter", Style::new().fg(Color::Yellow)),
+                Span::styled("Enter", Style::new().fg(Color::Cyan)),
                 Span::raw(format!(" {}", t(l, "status.submit"))),
             ]);
         }
         InputMode::Normal => {
             spans.extend([
-                Span::styled(" q", Style::new().fg(Color::Yellow)),
+                Span::styled(" q", Style::new().fg(Color::Cyan)),
                 Span::raw(format!(" {} ", t(l, "status.quit"))),
-                Span::styled("1-9", Style::new().fg(Color::Yellow)),
+                Span::styled("1-9", Style::new().fg(Color::Cyan)),
                 Span::raw(format!(" {} ", t(l, "status.screen"))),
-                Span::styled("← →", Style::new().fg(Color::Yellow)),
+                Span::styled("← →", Style::new().fg(Color::Cyan)),
                 Span::raw(format!(" {}", t(l, "status.navigate"))),
             ]);
             if !app.dashboard.notifications.is_empty() {
@@ -219,13 +219,13 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         }
         InputMode::Filtering => {
             spans.extend([
-                Span::styled(" Esc", Style::new().fg(Color::Yellow)),
+                Span::styled(" Esc", Style::new().fg(Color::Cyan)),
                 Span::raw(format!(" {} ", t(l, "status.close"))),
-                Span::styled("Enter", Style::new().fg(Color::Yellow)),
+                Span::styled("Enter", Style::new().fg(Color::Cyan)),
                 Span::raw(format!(" {} ", t(l, "status.apply"))),
-                Span::styled("Tab/↑↓", Style::new().fg(Color::Yellow)),
+                Span::styled("Tab/↑↓", Style::new().fg(Color::Cyan)),
                 Span::raw(format!(" {} ", t(l, "status.nav_fields"))),
-                Span::styled("Space", Style::new().fg(Color::Yellow)),
+                Span::styled("Space", Style::new().fg(Color::Cyan)),
                 Span::raw(format!(" {}", t(l, "status.cycle"))),
             ]);
         }

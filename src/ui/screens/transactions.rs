@@ -595,7 +595,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         t(app.locale, "header.account"),
         t(app.locale, "header.category"),
     ])
-    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    .style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .txn.items
@@ -702,7 +702,7 @@ fn render_filter_bar(frame: &mut Frame, area: Rect, app: &mut App) {
     let filter = &app.txn.filter;
     let is_filtering = app.input_mode == InputMode::Filtering;
     let border_color = if is_filtering {
-        Color::Yellow
+        Color::Cyan
     } else {
         Color::DarkGray
     };
@@ -746,7 +746,7 @@ fn render_filter_bar(frame: &mut Frame, area: Rect, app: &mut App) {
             row2.push(Span::raw(" | "));
         }
         let label_style = if active {
-            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
         } else {
             Style::new().fg(Color::DarkGray)
         };
@@ -991,7 +991,7 @@ fn render_confirmation_content(frame: &mut Frame, area: Rect, locale: Locale, co
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         format!(" {}", t(locale, "misc.is_this_correct")),
-        Style::new().fg(Color::Yellow),
+        Style::new().fg(Color::Cyan),
     )));
     lines.push(Line::from(""));
 

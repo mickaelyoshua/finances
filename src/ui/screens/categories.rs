@@ -122,7 +122,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         t(app.locale, "header.type"),
         t(app.locale, "detail.created"),
     ])
-    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    .style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
     let [table_area, detail_area] =
         Layout::vertical([Constraint::Min(5), Constraint::Length(5)]).areas(area);

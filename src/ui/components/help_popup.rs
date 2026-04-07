@@ -43,7 +43,7 @@ impl HelpPopup {
 
         for (key, action) in &keys {
             lines.push(Line::from(vec![
-                Span::styled(format!("  {key:<12}"), Style::new().fg(Color::Yellow)),
+                Span::styled(format!("  {key:<12}"), Style::new().fg(Color::Cyan)),
                 Span::raw(*action),
             ]));
         }

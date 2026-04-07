@@ -183,7 +183,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         t(app.locale, "header.checking"),
         t(app.locale, "header.credit_used"),
     ])
-    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    .style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
     let [table_area, detail_area] =
         Layout::vertical([Constraint::Min(5), Constraint::Length(7)]).areas(area);

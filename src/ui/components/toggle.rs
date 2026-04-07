@@ -22,7 +22,7 @@ pub fn render_toggle<'a>(
     max_width: u16,
 ) -> Line<'a> {
     let label_style = if active {
-        Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
     } else {
         Style::new().fg(Color::DarkGray)
     };

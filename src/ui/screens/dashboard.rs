@@ -93,7 +93,7 @@ fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
         t(app.locale, "header.checking"),
         t(app.locale, "header.credit_used"),
     ])
-    .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    .style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
     let balances: Vec<(Decimal, Decimal)> = app
         .accounts
@@ -153,7 +153,7 @@ fn render_balances(frame: &mut Frame, area: Rect, app: &App) {
                     t(app.locale, "misc.free")
                 ),
             ])
-            .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            .style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         );
     }
 
@@ -263,7 +263,7 @@ fn render_budgets(frame: &mut Frame, area: Rect, app: &App) {
             let bar_color = if ratio >= 1.0 {
                 Color::Red
             } else if ratio >= 0.75 {
-                Color::Yellow
+                Color::Cyan
             } else {
                 Color::Green
             };

@@ -68,7 +68,7 @@ impl ConfirmPopup {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(t(locale, "title.confirm"))
-            .border_style(Style::new().fg(Color::Yellow));
+            .border_style(Style::new().fg(Color::Cyan));
 
         frame.render_widget(Clear, popup_area);
         frame.render_widget(Paragraph::new(text).block(block), popup_area);

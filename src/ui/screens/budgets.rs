@@ -143,7 +143,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         Layout::vertical([Constraint::Min(5), Constraint::Length(6)]).areas(area);
 
     let header = Row::new([t(app.locale, "header.category"), t(app.locale, "header.amount"), t(app.locale, "header.period"), t(app.locale, "header.spent"), t(app.locale, "header.pct")])
-        .style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        .style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .budget.items
@@ -165,7 +165,7 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
             let pct_style = if pct > Decimal::from(100) {
                 Style::new().fg(Color::Red)
             } else if pct > Decimal::from(80) {
-                Style::new().fg(Color::Yellow)
+                Style::new().fg(Color::Cyan)
             } else {
                 Style::new().fg(Color::Green)
             };
