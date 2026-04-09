@@ -10,11 +10,11 @@ use rust_decimal_macros::dec;
 use sqlx::PgPool;
 use tokio::sync::MutexGuard;
 
-use finances::db::{
+use finances_tui::db::{
     accounts, budgets, categories, credit_card_payments, installments, notifications, recurring,
     transactions, transfers,
 };
-use finances::models::*;
+use finances_tui::models::*;
 
 /// Global mutex to serialize DB tests (they share one database).
 static DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -28,10 +28,10 @@ async fn setup() -> (MutexGuard<'static, ()>, PgPool) {
 
     dotenvy::dotenv().ok();
     let url = std::env::var("DATABASE_URL_TEST").unwrap_or_else(|_| DEFAULT_TEST_URL.to_string());
-    let pool = finances::db::create_pool(&url).await.unwrap();
+    let pool = finances_tui::db::create_pool(&url).await.unwrap();
 
     // Ensure schema is up to date
-    finances::db::run_migrations(&pool).await.unwrap();
+    finances_tui::db::run_migrations(&pool).await.unwrap();
 
     sqlx::query(
         "TRUNCATE transactions, transfers, credit_card_payments,
@@ -2228,7 +2228,7 @@ async fn build_statements_attributes_transactions_to_correct_period() {
     // Transaction on Feb 5 → should also be in the period ending Feb 10
     make_txn(&pool, dec!(50), "feb purchase", cat.id, acc.id, TransactionType::Expense, PaymentMethod::Credit, date(2026, 2, 5)).await;
 
-    use finances::ui::screens::cc_statements::build_statements;
+    use finances_tui::ui::screens::cc_statements::build_statements;
     let (stmts, _current_idx) = build_statements(&pool, &acc, 6).await.unwrap();
 
     // Find the statement with period ending on Jan 10
@@ -2272,7 +2272,7 @@ async fn build_statements_payment_attribution() {
     // Payment on Jan 15 → after Jan 10 close, before Feb 10 close → attributed to Jan statement
     credit_card_payments::create_payment(&pool, acc.id, dec!(500), date(2026, 1, 15), "pay jan").await.unwrap();
 
-    use finances::ui::screens::cc_statements::build_statements;
+    use finances_tui::ui::screens::cc_statements::build_statements;
     let (stmts, _) = build_statements(&pool, &acc, 6).await.unwrap();
 
     let jan_stmt = stmts.iter().find(|s| {
@@ -2313,7 +2313,7 @@ async fn build_statements_payment_on_close_day_is_attributed() {
     // Payment on April 2 (period_end + 1), simulating the "Pay Statement" action
     credit_card_payments::create_payment(&pool, acc.id, dec!(200), date(2026, 4, 2), "pay march stmt").await.unwrap();
 
-    use finances::ui::screens::cc_statements::build_statements;
+    use finances_tui::ui::screens::cc_statements::build_statements;
     let (stmts, _) = build_statements(&pool, &acc, 6).await.unwrap();
 
     let march_stmt = stmts.iter().find(|s| {

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use finances::ui::i18n::*;
+use finances_tui::ui::i18n::*;
 
 // ── Locale::toggle ──────────────────────────────────────────────
 

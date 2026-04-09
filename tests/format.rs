@@ -1,5 +1,5 @@
-use finances::ui::components::format::{format_brl, parse_positive_amount};
-use finances::ui::i18n::Locale;
+use finances_tui::ui::components::format::{format_brl, parse_positive_amount};
+use finances_tui::ui::i18n::Locale;
 use rust_decimal_macros::dec;
 
 const EN: Locale = Locale::En;

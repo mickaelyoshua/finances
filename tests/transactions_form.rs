@@ -4,9 +4,9 @@
 use chrono::Utc;
 use rust_decimal_macros::dec;
 
-use finances::models::*;
-use finances::ui::i18n::Locale;
-use finances::ui::screens::transactions::TransactionForm;
+use finances_tui::models::*;
+use finances_tui::ui::i18n::Locale;
+use finances_tui::ui::screens::transactions::TransactionForm;
 
 fn make_accounts() -> Vec<Account> {
     vec![Account {

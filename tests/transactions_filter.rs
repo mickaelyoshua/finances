@@ -5,9 +5,9 @@ use chrono::{NaiveDate, Utc};
 use crossterm::event::KeyCode;
 use rust_decimal_macros::dec;
 
-use finances::models::*;
-use finances::ui::i18n::Locale;
-use finances::ui::screens::transactions::{TransactionFilter, cycle_option};
+use finances_tui::models::*;
+use finances_tui::ui::i18n::Locale;
+use finances_tui::ui::screens::transactions::{TransactionFilter, cycle_option};
 
 // ── cycle_option (forward — Right key) ──────────────────────────
 

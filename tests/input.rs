@@ -1,5 +1,5 @@
 use crossterm::event::KeyCode;
-use finances::ui::components::input::InputField;
+use finances_tui::ui::components::input::InputField;
 
 // -- Basic insertion --
 

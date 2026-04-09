@@ -10,10 +10,10 @@
 //! 3. **TUI** (default) — enter raw-mode terminal, run the Elm/TEA event
 //!    loop (`draw → handle_key → tick`), and restore terminal on exit.
 
-use finances::config;
-use finances::db;
-use finances::ui;
-use finances::ui::i18n::{Locale, t};
+use finances_tui::config;
+use finances_tui::db;
+use finances_tui::ui;
+use finances_tui::ui::i18n::{Locale, t};
 
 use std::time::Duration;
 
@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
             db::notifications::upsert(
                 &pool,
                 &msg,
-                finances::models::NotificationType::NoTransactions,
+                finances_tui::models::NotificationType::NoTransactions,
                 None,
             )
             .await?;
@@ -80,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
             db::notifications::upsert(
                 &pool,
                 &msg,
-                finances::models::NotificationType::OverdueRecurring,
+                finances_tui::models::NotificationType::OverdueRecurring,
                 Some(r.id),
             )
             .await?;
@@ -90,9 +90,9 @@ async fn main() -> anyhow::Result<()> {
         // 3. Budget alerts (50%, 75%, 90%, 100%, exceeded)
         let budgets = db::budgets::list_budgets(&pool).await?;
         let categories = db::categories::list_categories(&pool).await?;
-        let (weekly_start, _) = finances::models::BudgetPeriod::Weekly.date_range(today);
-        let (monthly_start, _) = finances::models::BudgetPeriod::Monthly.date_range(today);
-        let (yearly_start, _) = finances::models::BudgetPeriod::Yearly.date_range(today);
+        let (weekly_start, _) = finances_tui::models::BudgetPeriod::Weekly.date_range(today);
+        let (monthly_start, _) = finances_tui::models::BudgetPeriod::Monthly.date_range(today);
+        let (yearly_start, _) = finances_tui::models::BudgetPeriod::Yearly.date_range(today);
         let spent_map = db::budgets::compute_all_spending(
             &pool,
             weekly_start,
@@ -103,11 +103,11 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
         // Ordered ascending so .rev().find() picks the highest crossed threshold per budget
-        let thresholds: &[(u32, finances::models::NotificationType)] = &[
-            (50, finances::models::NotificationType::Budget50),
-            (75, finances::models::NotificationType::Budget75),
-            (90, finances::models::NotificationType::Budget90),
-            (100, finances::models::NotificationType::Budget100),
+        let thresholds: &[(u32, finances_tui::models::NotificationType)] = &[
+            (50, finances_tui::models::NotificationType::Budget50),
+            (75, finances_tui::models::NotificationType::Budget75),
+            (90, finances_tui::models::NotificationType::Budget90),
+            (100, finances_tui::models::NotificationType::Budget100),
         ];
 
         for b in &budgets {
@@ -133,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
 
             // Find the highest crossed threshold only
             if pct_u32 > 100 {
-                let ntype = finances::models::NotificationType::BudgetExceeded;
+                let ntype = finances_tui::models::NotificationType::BudgetExceeded;
                 db::notifications::clear_stale_budget_notifications(&pool, b.id, ntype).await?;
                 let msg = format!(
                     "{} '{}' ({}) {} — {}/{}",

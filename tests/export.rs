@@ -7,8 +7,8 @@ use std::fs;
 use chrono::{NaiveDate, Utc};
 use rust_decimal_macros::dec;
 
-use finances::export;
-use finances::models::*;
+use finances_tui::export;
+use finances_tui::models::*;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

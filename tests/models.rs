@@ -1,7 +1,7 @@
 use chrono::{NaiveDate, Utc};
 use rust_decimal_macros::dec;
 
-use finances::models::*;
+use finances_tui::models::*;
 
 // -- Enum Display/FromStr roundtrips --
 

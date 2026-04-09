@@ -1,10 +1,10 @@
 use chrono::NaiveDate;
-use finances::db::{
+use finances_tui::db::{
     clamped_day, last_day_of_month, latest_closing_date, next_month, prev_month,
     recurring::compute_next_due, statement_due_date, statement_period,
 };
-use finances::models::Frequency;
-use finances::ui::screens::cc_statements::CreditCardStatement;
+use finances_tui::models::Frequency;
+use finances_tui::ui::screens::cc_statements::CreditCardStatement;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 

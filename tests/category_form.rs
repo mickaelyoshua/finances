@@ -3,9 +3,9 @@
 
 use chrono::Utc;
 
-use finances::models::*;
-use finances::ui::i18n::Locale;
-use finances::ui::screens::categories::{CategoryForm, CategoryFormMode};
+use finances_tui::models::*;
+use finances_tui::ui::i18n::Locale;
+use finances_tui::ui::screens::categories::{CategoryForm, CategoryFormMode};
 
 fn make_category(name_pt: Option<&str>) -> Category {
     Category {
