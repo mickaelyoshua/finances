@@ -1,4 +1,4 @@
-# Finances
+# Finances TUI
 
 A personal finance tracker with a terminal UI, built in Rust.
 
@@ -16,7 +16,7 @@ Track transactions, transfers, credit card payments, budgets, and recurring expe
 - **Installment purchases** — split credit card purchases into N monthly parcelas
 - **Transaction filtering** — filter by date range, account, category, type, payment method, or description
 - **Pagination** — navigate large transaction lists with PgUp/PgDn
-- **CSV export** — export any screen's data to `~/.local/share/finances/exports/`
+- **CSV export** — export any screen's data to `~/.local/share/finances-tui/exports/`
 - **Persistent notifications** — alerts for missing transactions, overdue recurring, and budget thresholds
 - **Desktop notifications** — system popup via `--notify` flag (designed for cron)
 - **Dev/prod switching** — `--prod` flag connects to production database
@@ -122,7 +122,7 @@ Set up a cron job to get daily reminders:
 ```sh
 crontab -e
 # Example: check every day at 20:00
-0 20 * * * /path/to/finances --notify --prod
+0 20 * * * /path/to/finances-tui --notify --prod
 ```
 
 ## Project Structure

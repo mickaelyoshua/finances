@@ -1,4 +1,4 @@
-//! Database operations for the finances app.
+//! Database operations for the finances-tui app.
 //!
 //! # Data model
 //! An **account** represents a financial institution (Nubank, PicPay) or cash wallet.

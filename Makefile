@@ -1,4 +1,4 @@
-# Finances — development workflow
+# Finances TUI — development workflow
 # Usage: make <target>
 
 .PHONY: dev
@@ -11,7 +11,7 @@ migrate: ## Run migrations on dev database
 
 .PHONY: seed
 seed: ## Reset dev DB to demo data from seeds.sql
-	docker exec -i finances-db-1 psql -U finances -d finances < seeds.sql
+	docker exec -i finances-tui-db-1 psql -U finances -d finances < seeds.sql
 
 .PHONY: migrate-prod
 migrate-prod: ## Run migrations on production database (Neon)

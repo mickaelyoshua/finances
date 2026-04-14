@@ -1,4 +1,4 @@
-# Finances — Developer Guide
+# Finances TUI — Developer Guide
 
 Personal finance TUI in Rust. Production database on Neon (PostgreSQL), local dev via docker-compose.
 
@@ -21,8 +21,8 @@ cargo run -- --notify --prod  # send desktop notifications (for cron)
 
 ## Deployment
 
-The release binary (`target/release/finances`) is launched on laptop startup
-via Hyprland: `exec-once = sh -c 'cd ~/personal/finances && ./target/release/finances --notify --prod'`
+The release binary (`target/release/finances-tui`) is launched on laptop startup
+via Hyprland: `exec-once = sh -c 'cd ~/personal/finances-tui && ./target/release/finances-tui --notify --prod'`
 
 `make deploy` runs tests first — if any test fails, the pipeline aborts before
 migrating or building. After a successful deploy the release binary is updated
@@ -51,8 +51,8 @@ in-place and will be used on the next startup.
 - **Enums**: all implement `Display` + `FromStr`; DB functions accept enum types, not `&str`
 - **Balances**: computed from transactions + transfers + credit_card_payments, never stored
 - **Migrations**: `sqlx::migrate!()` — idempotent, tracked in `_sqlx_migrations` table
-- **Logging**: tracing with daily-rotating file appender in `~/.local/share/finances/`
-- **Exports**: CSV files written to `~/.local/share/finances/exports/`
+- **Logging**: tracing with daily-rotating file appender in `~/.local/share/finances-tui/`
+- **Exports**: CSV files written to `~/.local/share/finances-tui/exports/`
 
 ## i18n (Internationalization)
 

@@ -7,7 +7,7 @@
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "finances", about = "Personal finance TUI manager")]
+#[command(name = "finances-tui", about = "Personal finance TUI manager")]
 pub struct Config {
     /// Run database migrations and exit
     #[arg(long)]

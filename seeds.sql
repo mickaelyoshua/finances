@@ -11,7 +11,7 @@
 -- Run with:
 --   make seed
 -- or directly:
---   docker exec -i finances-db psql -U finances -d finances < seeds.sql
+--   docker exec -i finances-tui-db-1 psql -U finances -d finances < seeds.sql
 
 BEGIN;
 

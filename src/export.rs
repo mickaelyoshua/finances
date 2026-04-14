@@ -1,6 +1,6 @@
 //! CSV export for all entity types.
 //!
-//! Files are written to `~/.local/share/finances/exports/` with timestamped names.
+//! Files are written to `~/.local/share/finances-tui/exports/` with timestamped names.
 //! Amounts are raw decimals (e.g., `1234.56`), not BRL-formatted, so the output
 //! is directly importable into spreadsheets without locale-aware parsing.
 //!
@@ -33,7 +33,7 @@ static EXPORT_SEQ: AtomicU32 = AtomicU32::new(0);
 fn export_dir() -> Result<PathBuf> {
     let data_dir = dirs::data_dir()
         .context("could not resolve data directory")?
-        .join("finances")
+        .join("finances-tui")
         .join("exports");
     std::fs::create_dir_all(&data_dir)?;
     Ok(data_dir)
@@ -443,7 +443,7 @@ fn svg_monthly_trend(monthly: &[MonthlyAggregate], app: &App) -> String {
 }
 
 /// Render the Reports screen state as a standalone HTML file with embedded SVG charts.
-/// Writes to `~/.local/share/finances/exports/` and returns the path.
+/// Writes to `~/.local/share/finances-tui/exports/` and returns the path.
 pub fn export_report_html(app: &App) -> Result<PathBuf> {
     let path = export_path_ext("report", "html")?;
     let l = app.locale;

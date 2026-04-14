@@ -1,4 +1,4 @@
-//! Entry point for the finances binary.
+//! Entry point for the finances-tui binary.
 //!
 //! Startup sequence: parse CLI flags → load `.env` / `.env.prod` → connect to
 //! PostgreSQL (with retry) → branch into one of three modes:
@@ -28,9 +28,9 @@ use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Log file rotates daily in ~/.local/share/finances/
+    // Log file rotates daily in ~/.local/share/finances-tui/
     let log_dir = dirs_log_dir();
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "finances.log");
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "finances-tui.log");
     init_tracing(file_appender);
 
     let cfg = Config::parse();
@@ -212,11 +212,11 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
-/// Returns `~/.local/share/finances/`, creating the directory if needed.
+/// Returns `~/.local/share/finances-tui/`, creating the directory if needed.
 fn dirs_log_dir() -> std::path::PathBuf {
     let dir = dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("finances");
+        .join("finances-tui");
     std::fs::create_dir_all(&dir).ok();
     dir
 }

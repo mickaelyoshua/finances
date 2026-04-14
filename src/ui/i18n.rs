@@ -325,7 +325,7 @@ fn t_en(key: &'static str) -> &'static str {
         "notif.overdue" => "Overdue",
         "notif.budget_exceeded" => "EXCEEDED",
         "notif.budget_reached" => "reached",
-        "notif.summary" => "Finances",
+        "notif.summary" => "Finances TUI",
 
         // ── Detail pane labels ──
         "detail.name" => "Name",
