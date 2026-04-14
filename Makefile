@@ -9,6 +9,10 @@ dev: ## Start local PostgreSQL via docker-compose
 migrate: ## Run migrations on dev database
 	cargo run -- --migrate
 
+.PHONY: seed
+seed: ## Reset dev DB to demo data from seeds.sql
+	docker exec -i finances-db-1 psql -U finances -d finances < seeds.sql
+
 .PHONY: migrate-prod
 migrate-prod: ## Run migrations on production database (Neon)
 	cargo run -- --migrate --prod
