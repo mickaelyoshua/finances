@@ -311,5 +311,31 @@ fn screen_help(screen: Screen, locale: Locale) -> HelpContent {
                 ("?", "Mostrar esta ajuda"),
             ],
         ),
+
+        // ── Reports ──
+        (Screen::Reports, Locale::En) => (
+            "Expense/income breakdowns by category and monthly trends, with period filters.",
+            vec![
+                ("Tab", "Cycle report views"),
+                ("p", "Cycle period preset"),
+                ("f", "Open filter popup"),
+                ("j / k", "Scroll category list"),
+                ("x", "Export HTML report"),
+                ("Ctrl+L", "Toggle language"),
+                ("?", "Show this help"),
+            ],
+        ),
+        (Screen::Reports, Locale::Pt) => (
+            "Relatórios de despesas/receitas por categoria e tendências mensais, com filtros de período.",
+            vec![
+                ("Tab", "Alternar visão do relatório"),
+                ("p", "Alternar preset de período"),
+                ("f", "Abrir filtros"),
+                ("j / k", "Rolar lista de categorias"),
+                ("x", "Exportar relatório HTML"),
+                ("Ctrl+L", "Alternar idioma"),
+                ("?", "Mostrar esta ajuda"),
+            ],
+        ),
     }
 }

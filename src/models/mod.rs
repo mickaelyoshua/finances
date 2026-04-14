@@ -5,6 +5,7 @@ pub mod credit_card_payment;
 pub mod installment;
 pub mod notification;
 pub mod recurring;
+pub mod report;
 pub mod transaction;
 pub mod transfer;
 
@@ -15,5 +16,6 @@ pub use credit_card_payment::*;
 pub use installment::*;
 pub use notification::*;
 pub use recurring::*;
+pub use report::*;
 pub use transaction::*;
 pub use transfer::*;

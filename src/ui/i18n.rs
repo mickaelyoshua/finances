@@ -75,6 +75,7 @@ fn t_en(key: &'static str) -> &'static str {
         "screen.transfers" => "Transfers",
         "screen.cc_payments" => "CC Payments",
         "screen.cc_statements" => "CC Statements",
+        "screen.reports" => "Reports",
 
         // ── Form labels ──
         "form.name" => "Name",
@@ -134,6 +135,7 @@ fn t_en(key: &'static str) -> &'static str {
         "header.to" => "To",
         "header.balance" => "Balance",
         "header.status" => "Status",
+        "header.filters" => "Filters",
 
         // ── Block/section titles ──
         "title.accounts" => "Accounts",
@@ -178,6 +180,23 @@ fn t_en(key: &'static str) -> &'static str {
         "title.current_cc_statements" => "Current CC Statements (Open)",
         "title.confirm" => "Confirm",
         "title.filter" => "Filter (Enter=apply, Esc=close, r=reset)",
+        "title.reports" => "Reports",
+        "title.expenses_by_category" => "Expenses by Category",
+        "title.income_by_category" => "Income by Category",
+        "title.monthly_trend" => "Monthly Trend",
+        "title.report_filters" => "Report Filters (Enter=apply, Esc=close)",
+
+        // ── Reports ──
+        "report.no_data" => "No data for this period.",
+        "report.filter.all_accounts" => "All accounts",
+        "report.filter.all_methods" => "All payment methods",
+        "report.preset.this_month" => "This month",
+        "report.preset.last_month" => "Last month",
+        "report.preset.last_3_months" => "Last 3 months",
+        "report.preset.ytd" => "Year to date",
+        "report.preset.this_year" => "This year",
+        "report.preset.last_year" => "Last year",
+        "report.preset.custom" => "Custom",
 
         // ── Status bar keybinding text ──
         "status.quit" => "Quit",
@@ -191,6 +210,7 @@ fn t_en(key: &'static str) -> &'static str {
         "status.apply" => "Apply",
         "status.cycle" => "Cycle",
         "status.unread" => "unread",
+        "status.export_report" => "Report exported",
 
         // ── Detail pane keybinding hints ──
         "hint.acct" => "[n] New  [e] Edit  [d] Deactivate  [x] Export",
@@ -204,6 +224,7 @@ fn t_en(key: &'static str) -> &'static str {
         "hint.cc_stmt_list" => "[Enter] View transactions  [p] Pay  [u] Unpay  [h/l] Switch account",
         "hint.cc_stmt_list_all" => "[h/l] Switch account",
         "hint.cc_stmt_detail" => "[Esc] Back  [Enter] Go to transaction / installment  [j/k] Navigate",
+        "hint.reports" => "[Tab] Cycle view  [p] Cycle preset  [f] Filter  [j/k] Scroll  [x] Export HTML",
 
         // ── Status messages ──
         "msg.create_account_first" => "Create an account first",
@@ -259,6 +280,10 @@ fn t_en(key: &'static str) -> &'static str {
         "misc.yes" => "Yes",
         "misc.no" => "No",
         "misc.all" => "All",
+        "misc.more" => "more",
+        "misc.net" => "Net",
+        "misc.total_income" => "Total income",
+        "misc.total_expense" => "Total expense",
         "misc.none" => "none",
         "misc.no_accounts" => "no accounts",
         "misc.no_cc_accounts" => "no credit card accounts",
@@ -340,6 +365,7 @@ fn t_pt(key: &'static str) -> Option<&'static str> {
         "screen.transfers" => "Transferências",
         "screen.cc_payments" => "Pag. Cartão",
         "screen.cc_statements" => "Faturas",
+        "screen.reports" => "Relatórios",
 
         // ── Form labels ──
         "form.name" => "Nome",
@@ -399,6 +425,7 @@ fn t_pt(key: &'static str) -> Option<&'static str> {
         "header.to" => "Para",
         "header.balance" => "Saldo",
         "header.status" => "Status",
+        "header.filters" => "Filtros",
 
         // ── Block/section titles ──
         "title.accounts" => "Contas",
@@ -443,6 +470,23 @@ fn t_pt(key: &'static str) -> Option<&'static str> {
         "title.current_cc_statements" => "Faturas Abertas",
         "title.confirm" => "Confirmar",
         "title.filter" => "Filtro (Enter=aplicar, Esc=fechar, r=limpar)",
+        "title.reports" => "Relatórios",
+        "title.expenses_by_category" => "Despesas por Categoria",
+        "title.income_by_category" => "Receitas por Categoria",
+        "title.monthly_trend" => "Tendência Mensal",
+        "title.report_filters" => "Filtros de Relatório (Enter=aplicar, Esc=fechar)",
+
+        // ── Reports ──
+        "report.no_data" => "Sem dados para este período.",
+        "report.filter.all_accounts" => "Todas as contas",
+        "report.filter.all_methods" => "Todos os métodos de pagamento",
+        "report.preset.this_month" => "Mês atual",
+        "report.preset.last_month" => "Mês anterior",
+        "report.preset.last_3_months" => "Últimos 3 meses",
+        "report.preset.ytd" => "Ano até hoje",
+        "report.preset.this_year" => "Ano atual",
+        "report.preset.last_year" => "Ano anterior",
+        "report.preset.custom" => "Personalizado",
 
         // ── Status bar keybinding text ──
         "status.quit" => "Sair",
@@ -456,6 +500,7 @@ fn t_pt(key: &'static str) -> Option<&'static str> {
         "status.apply" => "Aplicar",
         "status.cycle" => "Ciclar",
         "status.unread" => "não lidas",
+        "status.export_report" => "Relatório exportado",
 
         // ── Detail pane keybinding hints ──
         "hint.acct" => "[n] Nova  [e] Editar  [d] Desativar  [x] Exportar",
@@ -469,6 +514,7 @@ fn t_pt(key: &'static str) -> Option<&'static str> {
         "hint.cc_stmt_list" => "[Enter] Ver transações  [p] Pagar  [u] Estornar  [h/l] Trocar conta",
         "hint.cc_stmt_list_all" => "[h/l] Trocar conta",
         "hint.cc_stmt_detail" => "[Esc] Voltar  [Enter] Ir para transação / parcelamento  [j/k] Navegar",
+        "hint.reports" => "[Tab] Alternar visão  [p] Alternar preset  [f] Filtros  [j/k] Rolar  [x] Exportar HTML",
 
         // ── Status messages ──
         "msg.create_account_first" => "Crie uma conta primeiro",
@@ -524,6 +570,10 @@ fn t_pt(key: &'static str) -> Option<&'static str> {
         "misc.yes" => "Sim",
         "misc.no" => "Não",
         "misc.all" => "Todos",
+        "misc.more" => "mais",
+        "misc.net" => "Saldo",
+        "misc.total_income" => "Receita total",
+        "misc.total_expense" => "Despesa total",
         "misc.none" => "nenhum",
         "misc.no_accounts" => "sem contas",
         "misc.no_cc_accounts" => "sem contas com cartão",

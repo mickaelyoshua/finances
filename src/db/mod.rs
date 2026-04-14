@@ -19,6 +19,7 @@ pub mod credit_card_payments;
 pub mod installments;
 pub mod notifications;
 pub mod recurring;
+pub mod reports;
 pub mod transactions;
 pub mod transfers;
 

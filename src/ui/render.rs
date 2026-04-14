@@ -147,6 +147,7 @@ fn render_content(frame: &mut Frame, area: Rect, app: &mut App) {
         Screen::Transfers => super::screens::transfers::render(frame, area, app),
         Screen::CreditCardPayments => super::screens::cc_payments::render(frame, area, app),
         Screen::CreditCardStatements => super::screens::cc_statements::render(frame, area, app),
+        Screen::Reports => super::screens::reports::render(frame, area, app),
     }
 }
 

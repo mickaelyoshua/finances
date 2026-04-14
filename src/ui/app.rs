@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{Local, NaiveDate};
+use chrono::{Datelike, Local, NaiveDate};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::TableState;
 use rust_decimal::Decimal;
@@ -25,12 +25,13 @@ use sqlx::PgPool;
 
 use crate::{
     models::{
-        Account, Budget, Category, CreditCardPayment, InstallmentPurchase, Notification,
-        RecurringTransaction, Transaction, Transfer,
+        Account, Budget, Category, CategoryAggregate, CreditCardPayment, InstallmentPurchase,
+        MonthlyAggregate, Notification, RecurringTransaction, ReportFilter, ReportView,
+        Transaction, Transfer,
     },
     ui::{
         components::{help_popup::HelpPopup, popup::ConfirmPopup},
-        screens::transactions::{TransactionFilter, TransactionForm},
+        screens::{reports::ReportFilterDraft, transactions::{TransactionFilter, TransactionForm}},
     },
 };
 
@@ -57,10 +58,11 @@ pub enum Screen {
     Transfers,
     CreditCardPayments,
     CreditCardStatements,
+    Reports,
 }
 
 impl Screen {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Dashboard,
         Self::Transactions,
         Self::Accounts,
@@ -70,6 +72,7 @@ impl Screen {
         Self::Transfers,
         Self::CreditCardPayments,
         Self::CreditCardStatements,
+        Self::Reports,
     ];
 
     pub fn label(self) -> &'static str {
@@ -83,6 +86,7 @@ impl Screen {
             Self::Transfers => "Transfers",
             Self::CreditCardPayments => "CC Payments",
             Self::CreditCardStatements => "CC Statements",
+            Self::Reports => "Reports",
         }
     }
 
@@ -97,6 +101,7 @@ impl Screen {
             Self::Transfers => "screen.transfers",
             Self::CreditCardPayments => "screen.cc_payments",
             Self::CreditCardStatements => "screen.cc_statements",
+            Self::Reports => "screen.reports",
         }
     }
 
@@ -236,6 +241,19 @@ pub struct CcStatementScreenState {
     pub detail_table_state: TableState,
 }
 
+pub struct ReportsScreenState {
+    pub view: ReportView,
+    pub filter: ReportFilter,
+    /// Draft filter shown in the filter popup; `Some` while editing.
+    pub filter_draft: Option<ReportFilterDraft>,
+    /// Aggregates for the current filter (sorted descending by total).
+    pub expense_by_category: Vec<CategoryAggregate>,
+    pub income_by_category: Vec<CategoryAggregate>,
+    pub monthly: Vec<MonthlyAggregate>,
+    /// Vertical scroll offset for the category list (rows skipped from the top).
+    pub scroll: usize,
+}
+
 // ── Central application state ─────────────────────────────────────
 
 /// Single source of truth for the TUI.
@@ -274,6 +292,7 @@ pub struct App {
     pub xfer: TransferScreenState,
     pub cc_pay: CcPaymentScreenState,
     pub cc_stmt: CcStatementScreenState,
+    pub reports: ReportsScreenState,
 }
 
 impl App {
@@ -353,6 +372,15 @@ impl App {
                 view: StatementsView::List,
                 detail_txns: Vec::new(),
                 detail_table_state: TableState::default().with_selected(0),
+            },
+            reports: ReportsScreenState {
+                view: ReportView::ExpensesByCategory,
+                filter: ReportFilter::this_month(),
+                filter_draft: None,
+                expense_by_category: Vec::new(),
+                income_by_category: Vec::new(),
+                monthly: Vec::new(),
+                scroll: 0,
             },
         }
     }
@@ -626,6 +654,104 @@ impl App {
         Ok(())
     }
 
+    /// Hook called whenever the active screen changes. Lazily loads or refreshes
+    /// data that the destination screen depends on.
+    async fn on_screen_enter(&mut self) -> anyhow::Result<()> {
+        match self.screen {
+            Screen::CreditCardStatements => self.load_cc_statements().await?,
+            Screen::Reports => self.refresh_reports().await?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Query transactions in the current report filter range and re-bucket
+    /// them into expense/income category aggregates plus monthly totals.
+    pub async fn refresh_reports(&mut self) -> anyhow::Result<()> {
+        use crate::db::reports as db_reports;
+        use crate::models::{TransactionType, month_buckets};
+
+        let filter = self.reports.filter.clone();
+        let txns = db_reports::fetch_transactions_for_report(
+            &self.pool,
+            filter.start,
+            filter.end,
+            filter.account_id,
+            filter.payment_method,
+        )
+        .await?;
+
+        // Pre-index accounts by id for effective-date lookup.
+        let accounts_by_id: HashMap<i32, &Account> =
+            self.accounts.iter().map(|a| (a.id, a)).collect();
+
+        // Initialize monthly buckets so months with zero activity still render.
+        let buckets = month_buckets(filter.start, filter.end);
+        let mut monthly_map: HashMap<(i32, u32), MonthlyAggregate> = buckets
+            .iter()
+            .map(|&(y, m)| {
+                (
+                    (y, m),
+                    MonthlyAggregate {
+                        year: y,
+                        month: m,
+                        income: Decimal::ZERO,
+                        expense: Decimal::ZERO,
+                    },
+                )
+            })
+            .collect();
+
+        let mut expense_map: HashMap<i32, CategoryAggregate> = HashMap::new();
+        let mut income_map: HashMap<i32, CategoryAggregate> = HashMap::new();
+
+        for t in &txns {
+            let acc = accounts_by_id.get(&t.account_id).copied();
+            let eff = db_reports::effective_date(t, acc);
+            if eff < filter.start || eff > filter.end {
+                continue;
+            }
+            let ttype = t.parsed_type();
+            let amount = t.amount;
+
+            let key = (eff.year(), eff.month());
+            if let Some(m) = monthly_map.get_mut(&key) {
+                match ttype {
+                    TransactionType::Expense => m.expense += amount,
+                    TransactionType::Income => m.income += amount,
+                }
+            }
+
+            let map = match ttype {
+                TransactionType::Expense => &mut expense_map,
+                TransactionType::Income => &mut income_map,
+            };
+            let agg = map
+                .entry(t.category_id)
+                .or_insert(CategoryAggregate {
+                    category_id: t.category_id,
+                    total: Decimal::ZERO,
+                    count: 0,
+                });
+            agg.total += amount;
+            agg.count += 1;
+        }
+
+        let mut expense_vec: Vec<CategoryAggregate> = expense_map.into_values().collect();
+        let mut income_vec: Vec<CategoryAggregate> = income_map.into_values().collect();
+        expense_vec.sort_by(|a, b| b.total.cmp(&a.total));
+        income_vec.sort_by(|a, b| b.total.cmp(&a.total));
+
+        let mut monthly_vec: Vec<MonthlyAggregate> = monthly_map.into_values().collect();
+        monthly_vec.sort_by_key(|m| (m.year, m.month));
+
+        self.reports.expense_by_category = expense_vec;
+        self.reports.income_by_category = income_vec;
+        self.reports.monthly = monthly_vec;
+        self.reports.scroll = 0;
+        Ok(())
+    }
+
     pub fn tick(&mut self) {
         if let Some(msg) = &mut self.status_message {
             msg.ticks_remaining = msg.ticks_remaining.saturating_sub(1);
@@ -720,7 +846,10 @@ impl App {
         match self.input_mode {
             InputMode::Normal => self.handle_normal_key(key).await,
             InputMode::Editing => self.handle_editing_key(key).await,
-            InputMode::Filtering => self.handle_filtering_key(key).await,
+            InputMode::Filtering => match self.screen {
+                Screen::Reports => self.handle_reports_filter_key(key).await,
+                _ => self.handle_filtering_key(key).await,
+            },
         }
     }
 
@@ -766,26 +895,27 @@ impl App {
                 let i = (c as usize) - ('1' as usize);
                 if let Some(&screen) = Screen::ALL.get(i) {
                     self.screen = screen;
-                    if screen == Screen::CreditCardStatements {
-                        self.load_cc_statements().await?;
-                    }
+                    self.on_screen_enter().await?;
+                }
+            }
+            KeyCode::Char('0') => {
+                // Tab index 9 (Reports) — no 1..9 mapping reaches it.
+                if let Some(&screen) = Screen::ALL.get(9) {
+                    self.screen = screen;
+                    self.on_screen_enter().await?;
                 }
             }
             KeyCode::Left | KeyCode::Char('h')
                 if key.code == KeyCode::Left || self.screen != Screen::CreditCardStatements =>
             {
                 self.screen = self.screen.prev();
-                if self.screen == Screen::CreditCardStatements {
-                    self.load_cc_statements().await?;
-                }
+                self.on_screen_enter().await?;
             }
             KeyCode::Right | KeyCode::Char('l')
                 if key.code == KeyCode::Right || self.screen != Screen::CreditCardStatements =>
             {
                 self.screen = self.screen.next();
-                if self.screen == Screen::CreditCardStatements {
-                    self.load_cc_statements().await?;
-                }
+                self.on_screen_enter().await?;
             }
             KeyCode::Char('g') => self.pending_g = true,
             KeyCode::Char('G') => {
@@ -804,6 +934,7 @@ impl App {
                 Screen::Transfers => self.handle_transfers_key(key.code).await?,
                 Screen::CreditCardPayments => self.handle_cc_payments_key(key.code).await?,
                 Screen::CreditCardStatements => self.handle_cc_statements_key(key.code).await?,
+                Screen::Reports => self.handle_reports_key(key.code).await?,
             },
         }
         Ok(())
@@ -834,6 +965,7 @@ impl App {
                     self.cc_stmt.detail_txns.len(),
                 )),
             },
+            Screen::Reports => None,
         }
     }
 
